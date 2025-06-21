@@ -9,6 +9,8 @@ import logging
 import json
 import sys
 import time
+import random
+import http.client
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List
@@ -85,6 +87,9 @@ def get_kline(
     """
     返回字段：date, open, close, high, low, volume, amount, turnover
     """
+    # 添加随机延迟避免请求过快
+    time.sleep(random.uniform(0.1, 0.5))
+    
     raw = ak.stock_zh_a_hist(
         symbol=code,
         period="daily",
@@ -177,10 +182,15 @@ def fetch_one(
             logger.exception("读取 %s 失败，将重新下载", csv_path)
 
     # ---------- ② 抓取历史 ----------
-    for attempt in range(1, 4):
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
         try:
+            # 添加随机延迟避免请求过快
+            time.sleep(random.uniform(0.1, 0.5))
+            
             new_df = get_kline(code, start, end)
             if new_df.empty:
+                logger.warning("%s 返回空数据", code)
                 break
 
             new_df = validate(new_df)
@@ -195,12 +205,19 @@ def fetch_one(
                 )
 
             new_df.to_csv(csv_path, index=False)
+            logger.info("%s 抓取成功 (尝试 %d/%d)", code, attempt, max_attempts)
             break
-        except Exception:
-            logger.exception("%s 第 %d 次抓取失败", code, attempt)
+        except (http.client.RemoteDisconnected, ConnectionError, TimeoutError) as e:
+            wait_time = min(2 ** attempt, 30)  # 指数退避策略
+            logger.warning("%s 连接失败 (尝试 %d/%d): %s, 等待 %.1f秒后重试", 
+                          code, attempt, max_attempts, str(e), wait_time)
+            time.sleep(wait_time)
+        except Exception as e:
+            logger.exception("%s 抓取失败 (尝试 %d/%d): %s", 
+                            code, attempt, max_attempts, str(e))
             time.sleep(2)
     else:
-        logger.error("%s 三次抓取均失败，已跳过！", code)
+        logger.error("%s 所有 %d 次尝试均失败，已跳过！", code, max_attempts)
 
 
 # --------------------------- 主函数 --------------------------- #
@@ -212,7 +229,8 @@ def main():
     parser.add_argument("--start", default="20250101", help="起始日期 YYYYMMDD (默认 20050101)")
     parser.add_argument("--end", default="today", help="结束日期 YYYY-MM-DD 或 'today' (默认 today)")
     parser.add_argument("--out", default="./data", help="输出目录 (默认 ./data)")
-    parser.add_argument("--workers", type=int, default=20, help="并发线程数 (默认 20)")    
+    parser.add_argument("--workers", type=int, default=8, help="并发线程数 (默认 8)")  # 降低默认并发数
+    parser.add_argument("--delay", type=float, default=0.2, help="请求间最小延迟 (默认 0.2秒)")
     args = parser.parse_args()
 
     start = args.start
@@ -229,6 +247,7 @@ def main():
         end,
         out_dir.resolve(),
     )
+    logger.info("并发线程数: %d | 请求延迟: %.2f秒", args.workers, args.delay)
 
     codes = get_constituents(args.min_mktcap, args.small_player)
     if not codes:
@@ -236,13 +255,26 @@ def main():
         sys.exit(1)
 
     # ---------- 抓取历史 ----------
+    logger.info("开始抓取 %d 只股票数据...", len(codes))
+    
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = [
             executor.submit(fetch_one, code, start, end, out_dir, True)
             for code in codes
         ]
-        for _ in tqdm(as_completed(futures), total=len(futures), desc="下载进度"):
-            pass
+        
+        # 使用tqdm显示进度
+        completed_count = 0
+        with tqdm(total=len(futures), desc="下载进度") as pbar:
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error("任务执行失败: %s", str(e))
+                finally:
+                    completed_count += 1
+                    pbar.update(1)
+                    pbar.set_postfix_str(f"{completed_count}/{len(futures)}")
     
     logger.info("全部任务完成，数据已保存至 %s", out_dir.resolve())
 

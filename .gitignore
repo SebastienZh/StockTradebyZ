@@ -1,0 +1,16 @@
+# 忽略所有 .log 文件
+*.log
+
+# 忽略特定文件
+config.local.yml
+
+# 忽略目录（末尾加 /）
+.venv/
+data/
+
+
+# 忽略所有 .tmp 文件（包括子目录）
+**/*.tmp
+
+# 例外规则（用 ! 取消忽略）
+!important.log
