@@ -22,6 +22,7 @@ import random
 import sys
 import time
 import warnings
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -31,8 +32,12 @@ import pandas as pd
 import tushare as ts
 from mootdx.quotes import Quotes
 from tqdm import tqdm
+from dotenv import load_dotenv
 
 warnings.filterwarnings("ignore")
+
+# 加载.env文件
+load_dotenv()
 
 # --------------------------- 全局日志配置 --------------------------- #
 LOG_FILE = Path("fetch.log")
@@ -368,7 +373,11 @@ def main():
 
     # ---------- Token 处理 ---------- #
     if args.datasource == "tushare":
-        ts_token = " "  # 填入你的token
+        # 从环境变量获取token
+        ts_token = os.getenv("TUSHARE_TOKEN")
+        if not ts_token:
+            logger.error("未找到TUSHARE_TOKEN环境变量，请在.env文件中设置")
+            sys.exit(1)
         ts.set_token(ts_token)
         global pro
         pro = ts.pro_api()
