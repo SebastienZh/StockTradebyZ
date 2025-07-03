@@ -1,0 +1,47 @@
+# python 文件
+main.py
+backtest.py
+
+# 忽略数据目录
+/data/
+/data/*
+
+# 忽略环境配置文件
+
+
+# Python相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+.python-version
+
+# 日志文件
+*.log
+fetch.log
+select_results.log
+
+# 输出文件
+*.csv
+*.png
+*_trades.csv
+*_equity_curve.png
+
+# 缓存
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# 编辑器相关
+.idea/
+.vscode/
+*.swp
+*.swo
+*~ 
+
