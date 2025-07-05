@@ -17,6 +17,7 @@ import pandas as pd
 import tushare as ts
 from mootdx.quotes import Quotes
 from tqdm import tqdm
+import yfinance as yf
 
 warnings.filterwarnings("ignore")
 
@@ -69,6 +70,8 @@ def get_constituents(
         cond &= ~df["code"].str.startswith(("300", "301", "688", "8", "4"))
 
     codes = df.loc[cond, "code"].str.zfill(6).tolist()
+    with open("data/selected_codes.json", "w", encoding="utf-8") as f:
+        json.dump(codes, f, ensure_ascii=False, indent=4)
 
     # 附加股票池 appendix.json
     try:
@@ -202,6 +205,60 @@ def _get_kline_mootdx(code: str, start: str, end: str, adjust: str, freq_code: i
     df = df.sort_values("date").reset_index(drop=True)    
     return df[["date", "open", "close", "high", "low", "volume"]]
 
+# ---------- yfinance 工具函数 ---------- #
+
+def _convert_to_yfinance_symbol(symbol: str) -> str:
+    """
+    将股票代码转换为yfinance格式
+    
+    Args:
+        symbol (str): 原始股票代码
+        
+    Returns:
+        str: yfinance格式的股票代码
+    """
+    if symbol.endswith('.HK'):
+        return symbol[1:]  # 港股减掉第1个数字
+    elif symbol.startswith('6'):
+        return f"{symbol}.SS"
+    elif symbol.startswith('8') or symbol.startswith('4'):
+        return f"{symbol}.BJ"
+    elif symbol.startswith('0') or symbol.startswith('3'):
+        return f"{symbol}.SZ"
+    else:
+        return symbol
+
+def _get_kline_yfinance(code: str, start: str, end: str, adjust: str, freq_code: int) -> pd.DataFrame:    
+    symbol = _convert_to_yfinance_symbol(code)
+    start_ts = pd.to_datetime(start, format="%Y%m%d")
+    end_ts = pd.to_datetime(end, format="%Y%m%d")
+    
+    try:
+        adj_start_date = start_ts.strftime('%Y-%m-%d')
+        adj_end_date = end_ts.strftime('%Y-%m-%d')
+        
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(start=adj_start_date, end=adj_end_date, interval="1d")
+            
+    except Exception as e:
+        logger.warning("yfinance 拉取 %s 失败: %s", code, e)
+        return pd.DataFrame()
+        
+    if df is None or df.empty:
+        return pd.DataFrame()
+    
+    df = df.reset_index()
+    df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
+
+    df = df.rename(
+        columns={"Date": "date", "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"}
+    )
+    df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+    
+    df = df[(df["date"].dt.date >= start_ts.date()) & (df["date"].dt.date <= end_ts.date())].copy()
+    df = df.sort_values("date").reset_index(drop=True)    
+    return df[["date", "open", "close", "high", "low", "volume"]]
+
 # ---------- 通用接口 ---------- #
 
 def get_kline(
@@ -218,8 +275,10 @@ def get_kline(
         return _get_kline_akshare(code, start, end, adjust)
     elif datasource == "mootdx":        
         return _get_kline_mootdx(code, start, end, adjust, freq_code)
+    elif datasource == "yfinance":
+        return _get_kline_yfinance(code, start, end, adjust, freq_code)
     else:
-        raise ValueError("datasource 仅支持 'tushare', 'akshare' 或 'mootdx'")
+        raise ValueError("datasource 仅支持 'tushare', 'akshare', 'mootdx' 或 'yfinance'")
 
 # ---------- 数据校验 ---------- #
 
@@ -290,9 +349,9 @@ def fetch_one(
 
 def main():
     parser = argparse.ArgumentParser(description="按市值筛选 A 股并抓取历史 K 线")
-    parser.add_argument("--datasource", choices=["tushare", "akshare", "mootdx"], default="tushare", help="历史 K 线数据源")
+    parser.add_argument("--datasource", choices=["tushare", "akshare", "mootdx", "yfinance"], default="tushare", help="历史 K 线数据源")
     parser.add_argument("--frequency", type=int, choices=list(_FREQ_MAP.keys()), default=4, help="K线频率编码，参见说明")
-    parser.add_argument("--exclude-gem", default=True, help="True则排除创业板/科创板/北交所")
+    parser.add_argument("--exclude-gem", default=False, help="True则排除创业板/科创板/北交所")
     parser.add_argument("--min-mktcap", type=float, default=5e9, help="最小总市值（含），单位：元")
     parser.add_argument("--max-mktcap", type=float, default=float("+inf"), help="最大总市值（含），单位：元，默认无限制")
     parser.add_argument("--start", default="20190101", help="起始日期 YYYYMMDD 或 'today'")
