@@ -46,7 +46,7 @@
       "activate": true,                 
       "params": {
         "j_threshold": 10,                 
-        "max_window": 100,                
+        "max_window": 120,                
         "fluc_threshold": 0.03,
         "j_q_threshold": 0.10,
         "gap_threshold": 0.2

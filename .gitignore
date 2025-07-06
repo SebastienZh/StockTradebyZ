@@ -29,6 +29,7 @@ coverage.xml
 
 # 数据目录（会在容器中创建）
 data/
+test/
 logs/
 
 # 其他
