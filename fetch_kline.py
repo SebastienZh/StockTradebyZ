@@ -267,6 +267,98 @@ def _get_kline_yfinance(code: str, start: str, end: str, adjust: str, freq_code:
     df = df.sort_values("date").reset_index(drop=True)    
     return df[["date", "open", "close", "high", "low", "volume"]]
 
+def _get_kline_batch_yfinance(codes: List[str], start: str, end: str, adjust: str, freq_code: int) -> dict[str, pd.DataFrame]:
+    """
+    批量获取多个股票代码的yfinance数据
+    
+    Args:
+        codes (List[str]): 股票代码列表
+        start (str): 开始日期，格式：YYYYMMDD
+        end (str): 结束日期，格式：YYYYMMDD
+        adjust (str): 复权类型
+        freq_code (int): 频率代码
+        
+    Returns:
+        dict[str, pd.DataFrame]: 以股票代码为键，DataFrame为值的字典
+    """
+    symbols = [_convert_to_yfinance_symbol(code) for code in codes]
+    start_ts = pd.to_datetime(start, format="%Y%m%d")
+    end_ts = pd.to_datetime(end, format="%Y%m%d")
+    
+    try:
+        adj_start_date = start_ts.strftime('%Y-%m-%d')
+        adj_end_date = end_ts.strftime('%Y-%m-%d')
+
+        with yf_lock:
+            df = yf.download(symbols, start=adj_start_date, end=adj_end_date, interval="1d", group_by="ticker", auto_adjust=True, progress=False)
+            
+    except Exception as e:
+        logger.warning("yfinance 批量拉取失败: %s", e)
+        return {code: pd.DataFrame() for code in codes}
+        
+    if df is None or df.empty:
+        return {code: pd.DataFrame() for code in codes}
+    
+    dfs = {}
+    
+    # 处理 MultiIndex 列名
+    if isinstance(df.columns, pd.MultiIndex):
+        # 获取所有symbol名称
+        symbols_in_df = df.columns.get_level_values(0).unique()
+        
+        for symbol in symbols_in_df:
+            # 找到对应的原始代码
+            original_code = None
+            for code in codes:
+                if _convert_to_yfinance_symbol(code) == symbol:
+                    original_code = code
+                    break
+            
+            if original_code is None:
+                continue
+                
+            # 提取该symbol的数据
+            symbol_df = df[symbol].copy()
+            symbol_df = symbol_df.reset_index()
+            symbol_df['Date'] = pd.to_datetime(symbol_df['Date']).dt.tz_localize(None)
+            
+            symbol_df = symbol_df.rename(
+                columns={"Date": "date", "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"}
+            )
+            symbol_df["date"] = pd.to_datetime(symbol_df["date"]).dt.normalize()
+            
+            symbol_df = symbol_df[(symbol_df["date"].dt.date >= start_ts.date()) & (symbol_df["date"].dt.date <= end_ts.date())].copy()
+            symbol_df = symbol_df.sort_values("date").reset_index(drop=True)
+            
+            dfs[original_code] = symbol_df[["date", "open", "close", "high", "low", "volume"]]
+    else:
+        # 单个股票的情况，处理方式与单个函数相同
+        for code in codes:
+            symbol = _convert_to_yfinance_symbol(code)
+            if symbol in df.columns.get_level_values(0) if isinstance(df.columns, pd.MultiIndex) else [df.name]:
+                symbol_df = df.copy()
+                symbol_df = symbol_df.reset_index()
+                symbol_df['Date'] = pd.to_datetime(symbol_df['Date']).dt.tz_localize(None)
+                
+                symbol_df = symbol_df.rename(
+                    columns={"Date": "date", "Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"}
+                )
+                symbol_df["date"] = pd.to_datetime(symbol_df["date"]).dt.normalize()
+                
+                symbol_df = symbol_df[(symbol_df["date"].dt.date >= start_ts.date()) & (symbol_df["date"].dt.date <= end_ts.date())].copy()
+                symbol_df = symbol_df.sort_values("date").reset_index(drop=True)
+                
+                dfs[code] = symbol_df[["date", "open", "close", "high", "low", "volume"]]
+            else:
+                dfs[code] = pd.DataFrame()
+    
+    # 确保所有请求的代码都有返回值，即使为空DataFrame
+    for code in codes:
+        if code not in dfs:
+            dfs[code] = pd.DataFrame()
+    
+    return dfs
+
 # ---------- 通用接口 ---------- #
 
 def get_kline(
@@ -352,6 +444,108 @@ def fetch_one(
     else:
         logger.error("%s 三次抓取均失败，已跳过！", code)
 
+# ---------- 批量股票抓取（yfinance） ---------- #
+def fetch_batch_yfinance(
+    codes: List[str],
+    start: str,
+    end: str,
+    out_dir: Path,
+    incremental: bool,
+    freq_code: int,
+):
+    """
+    批量获取多个股票代码的yfinance数据并保存为CSV文件
+    
+    Args:
+        codes (List[str]): 股票代码列表
+        start (str): 开始日期，格式：YYYYMMDD
+        end (str): 结束日期，格式：YYYYMMDD
+        out_dir (Path): 输出目录
+        incremental (bool): 是否增量更新
+        freq_code (int): 频率代码
+    """
+    # 处理增量更新：收集需要更新的代码和对应的开始日期
+    codes_to_fetch = []
+    start_dates = {}
+    
+    for code in codes:
+        csv_path = out_dir / f"{code}.csv"
+        
+        if incremental and csv_path.exists():
+            try:
+                existing = pd.read_csv(csv_path, parse_dates=["date"])
+                last_date = existing["date"].max()
+                if last_date.date() > pd.to_datetime(end, format="%Y%m%d").date():
+                    logger.debug("%s 已是最新，无需更新", code)
+                    continue
+                start_dates[code] = last_date.strftime("%Y%m%d")
+            except Exception:
+                logger.exception("读取 %s 失败，将重新下载", csv_path)
+                start_dates[code] = start
+        else:
+            start_dates[code] = start
+        
+        codes_to_fetch.append(code)
+    
+    if not codes_to_fetch:
+        logger.info("所有股票都已是最新，无需更新")
+        return
+    
+    # 按开始日期分组，相同开始日期的代码可以批量获取
+    start_groups = {}
+    for code in codes_to_fetch:
+        start_date = start_dates[code]
+        if start_date not in start_groups:
+            start_groups[start_date] = []
+        start_groups[start_date].append(code)
+    
+    # 对每个开始日期组进行批量获取
+    for start_date, group_codes in start_groups.items():
+        for attempt in range(1, 4):
+            try:
+                logger.info("批量获取 %d 只股票，开始日期: %s", len(group_codes), start_date)
+                batch_data = _get_kline_batch_yfinance(group_codes, start_date, end, "qfq", freq_code)
+                
+                # 处理每个股票的数据
+                for code in group_codes:
+                    csv_path = out_dir / f"{code}.csv"
+                    new_df = batch_data.get(code, pd.DataFrame())
+                    
+                    if new_df.empty:
+                        logger.debug("%s 无新数据", code)
+                        continue
+                    
+                    new_df = validate(new_df)
+                    
+                    # 处理增量更新
+                    if csv_path.exists() and incremental and start_date != start:
+                        try:
+                            old_df = pd.read_csv(
+                                csv_path,
+                                parse_dates=["date"],
+                                index_col=False
+                            )
+                            old_df = drop_dup_columns(old_df)
+                            new_df = drop_dup_columns(new_df)
+                            new_df = (
+                                pd.concat([old_df, new_df], ignore_index=True)
+                                .drop_duplicates(subset="date")
+                                .sort_values("date")
+                            )
+                        except Exception:
+                            logger.exception("合并 %s 数据失败，将覆盖", code)
+                    
+                    new_df.to_csv(csv_path, index=False)
+                    logger.debug("%s 数据已保存", code)
+                
+                break  # 成功获取，跳出重试循环
+                
+            except Exception:
+                logger.exception("批量获取第 %d 次失败", attempt)
+                if attempt < 3:
+                    time.sleep(random.uniform(1, 3) * attempt)  # 指数退避
+        else:
+            logger.error("批量获取三次均失败，已跳过 %d 只股票", len(group_codes))
 
 # ---------- 主入口 ---------- #
 
@@ -411,23 +605,40 @@ def main():
         end,
     )
 
-    # ---------- 多线程抓取 ---------- #
-    with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = [
-            executor.submit(
-                fetch_one,
-                code,
+    # ---------- 数据抓取 ---------- #
+    if args.datasource == "yfinance":
+        # yfinance 使用批量获取，不使用多线程
+        batch_size = 500  # 每次最多获取500个股票
+        for i in range(0, len(codes), batch_size):
+            batch_codes = codes[i:i + batch_size]
+            logger.info("处理第 %d-%d 批股票，共 %d 只", i + 1, min(i + batch_size, len(codes)), len(batch_codes))
+            fetch_batch_yfinance(
+                batch_codes,
                 start,
                 end,
                 out_dir,
                 True,
-                args.datasource,
                 args.frequency,
             )
-            for code in codes
-        ]
-        for _ in tqdm(as_completed(futures), total=len(futures), desc="下载进度"):
-            pass
+            logger.info("已完成 %d/%d 批次", i // batch_size + 1, (len(codes) + batch_size - 1) // batch_size)
+    else:
+        # 其他数据源使用多线程
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            futures = [
+                executor.submit(
+                    fetch_one,
+                    code,
+                    start,
+                    end,
+                    out_dir,
+                    True,
+                    args.datasource,
+                    args.frequency,
+                )
+                for code in codes
+            ]
+            for _ in tqdm(as_completed(futures), total=len(futures), desc="下载进度"):
+                pass
 
     logger.info("全部任务完成，数据已保存至 %s", out_dir.resolve())
 
