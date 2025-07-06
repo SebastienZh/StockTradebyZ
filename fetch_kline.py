@@ -34,7 +34,7 @@ logging.basicConfig(
 logger = logging.getLogger("fetch_mktcap")
 
 # 屏蔽第三方库多余 INFO 日志
-for noisy in ("httpx", "urllib3", "_client", "akshare"):
+for noisy in ("httpx", "urllib3", "_client", "akshare", "yfinance"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 
 # --------------------------- 市值快照 --------------------------- #
@@ -237,8 +237,7 @@ def _get_kline_yfinance(code: str, start: str, end: str, adjust: str, freq_code:
         adj_start_date = start_ts.strftime('%Y-%m-%d')
         adj_end_date = end_ts.strftime('%Y-%m-%d')
         
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(start=adj_start_date, end=adj_end_date, interval="1d")
+        df = yf.download(symbol, start=adj_start_date, end=adj_end_date, interval="1d", group_by="ticker", auto_adjust=True, progress=False)
             
     except Exception as e:
         logger.warning("yfinance 拉取 %s 失败: %s", code, e)
@@ -246,6 +245,11 @@ def _get_kline_yfinance(code: str, start: str, end: str, adjust: str, freq_code:
         
     if df is None or df.empty:
         return pd.DataFrame()
+    
+    # 处理 MultiIndex 列名，去掉 symbol 层级
+    if isinstance(df.columns, pd.MultiIndex):
+        # 如果列名是 MultiIndex，只保留 OHLCV 数据，去掉 symbol 层级
+        df.columns = df.columns.get_level_values(1)  # 获取第二层列名（OHLCV）
     
     df = df.reset_index()
     df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
@@ -349,8 +353,9 @@ def fetch_one(
 
 def main():
     parser = argparse.ArgumentParser(description="按市值筛选 A 股并抓取历史 K 线")
-    parser.add_argument("--datasource", choices=["tushare", "akshare", "mootdx", "yfinance"], default="tushare", help="历史 K 线数据源")
+    parser.add_argument("--datasource", choices=["tushare", "akshare", "mootdx", "yfinance"], default="yfinance", help="历史 K 线数据源")
     parser.add_argument("--frequency", type=int, choices=list(_FREQ_MAP.keys()), default=4, help="K线频率编码，参见说明")
+    parser.add_argument("--symbol", type=str, help="指定股票代码，使用该参数会跳过股票池筛选参数")
     parser.add_argument("--exclude-gem", default=False, help="True则排除创业板/科创板/北交所")
     parser.add_argument("--min-mktcap", type=float, default=5e9, help="最小总市值（含），单位：元")
     parser.add_argument("--max-mktcap", type=float, default=float("+inf"), help="最大总市值（含），单位：元，默认无限制")
@@ -374,18 +379,20 @@ def main():
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ---------- 市值快照 & 股票池 ---------- #
-    mktcap_df = _get_mktcap_ak()    
-
-    codes_from_filter = get_constituents(
-        args.min_mktcap,
-        args.max_mktcap,
-        args.exclude_gem,
-        mktcap_df=mktcap_df,
-    )    
-    # 加上本地已有的股票，确保旧数据也能更新
-    local_codes = [p.stem for p in out_dir.glob("*.csv")]
-    codes = sorted(set(codes_from_filter) | set(local_codes))
+    # ---------- 指定股票代码 & 市值快照 & 股票池 ---------- #
+    if args.symbol:
+        codes = [args.symbol]
+    else:
+        mktcap_df = _get_mktcap_ak()    
+        codes_from_filter = get_constituents(
+            args.min_mktcap,
+            args.max_mktcap,
+            args.exclude_gem,
+            mktcap_df=mktcap_df,
+        )    
+        # 加上本地已有的股票，确保旧数据也能更新
+        local_codes = [p.stem for p in out_dir.glob("*.csv")]
+        codes = sorted(set(codes_from_filter) | set(local_codes))
 
     if not codes:
         logger.error("筛选结果为空，请调整参数！")
