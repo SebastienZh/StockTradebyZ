@@ -453,7 +453,7 @@ class BreakoutVolumeKDJSelector:
 
         # ---- 技术指标 ----
         hist = compute_kdj(hist)
-        hist["pct_chg"] = hist["close"].pct_change() * 100
+        hist["pct_chg"] = hist["close"].pct_change(fill_method=None) * 100
         hist["DIF"] = compute_dif(hist)
 
         # 0) 指定日约束：J < j_threshold 或位于历史分位；且 DIF > 0
