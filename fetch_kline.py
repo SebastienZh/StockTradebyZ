@@ -18,6 +18,7 @@ import tushare as ts
 from mootdx.quotes import Quotes
 from tqdm import tqdm
 import yfinance as yf
+import threading
 
 warnings.filterwarnings("ignore")
 
@@ -228,6 +229,8 @@ def _convert_to_yfinance_symbol(symbol: str) -> str:
     else:
         return symbol
 
+yf_lock = threading.Lock()
+        
 def _get_kline_yfinance(code: str, start: str, end: str, adjust: str, freq_code: int) -> pd.DataFrame:    
     symbol = _convert_to_yfinance_symbol(code)
     start_ts = pd.to_datetime(start, format="%Y%m%d")
@@ -236,8 +239,9 @@ def _get_kline_yfinance(code: str, start: str, end: str, adjust: str, freq_code:
     try:
         adj_start_date = start_ts.strftime('%Y-%m-%d')
         adj_end_date = end_ts.strftime('%Y-%m-%d')
-        
-        df = yf.download(symbol, start=adj_start_date, end=adj_end_date, interval="1d", group_by="ticker", auto_adjust=True, progress=False)
+
+        with yf_lock:
+            df = yf.download(symbol, start=adj_start_date, end=adj_end_date, interval="1d", group_by="ticker", auto_adjust=True, progress=False)
             
     except Exception as e:
         logger.warning("yfinance 拉取 %s 失败: %s", code, e)
