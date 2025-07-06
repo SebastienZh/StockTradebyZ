@@ -102,7 +102,7 @@ python -m mootdx bestip -vv
 python fetch_kline.py \
   --datasource mootdx      # mootdx / akshare / tushare
   --frequency 4            # K 线频率编码（4 = 日线）
-  --exclude-gem            # 排除创业板 / 科创板 / 北交所
+  --exclude-gem ture       # 排除创业板 / 科创板 / 北交所
   --min-mktcap 5e9         # 最小总市值（元）
   --max-mktcap +inf        # 最大总市值（元）
   --start 20200101         # 起始日期（YYYYMMDD 或 today）
