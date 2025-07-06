@@ -19,6 +19,7 @@ echo "$(date): 开始执行每日任务" >> /app/logs/daily_task.log
 # 执行fetch_kline
 echo "$(date): 开始执行fetch_kline" >> /app/logs/daily_task.log
 cd /app && python fetch_kline.py --datasource yfinance --frequency 4 --min-mktcap 2e9 --start 20240701 --end today --out ./data --workers 1 >> /app/logs/fetch_kline.log 2>&1
+cd /app && python fetch_kline.py --datasource yfinance --frequency 4 --start 20240701 --end today --out ./data.hk --workers 1 --market hk >> /app/logs/fetch_kline.log 2>&1
 
 # 检查fetch_kline是否成功
 if [ $? -eq 0 ]; then
@@ -27,6 +28,7 @@ if [ $? -eq 0 ]; then
     # 执行select_stock
     echo "$(date): 开始执行select_stock，日期: $TODAY" >> /app/logs/daily_task.log
     cd /app && python select_stock.py --data-dir ./data --config ./configs.json --date $TODAY >> /app/logs/select_stock.log 2>&1
+    cd /app && python select_stock.py --data-dir ./data.hk --config ./configs_hk.json --date $TODAY >> /app/logs/select_stock.log 2>&1
     
     if [ $? -eq 0 ]; then
         echo "$(date): select_stock执行成功" >> /app/logs/daily_task.log

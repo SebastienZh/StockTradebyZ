@@ -14,8 +14,9 @@ COPY requirements.txt .
 # 安装Python依赖
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制项目文件
-COPY . .
+# 只复制 python 文件
+COPY *.py /app/
+COPY entrypoint.sh /app/
 
 # 创建数据目录
 RUN mkdir -p /app/data
