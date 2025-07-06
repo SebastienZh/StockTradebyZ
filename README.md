@@ -52,8 +52,18 @@
 ### 安装依赖
 
 ```bash
-# 建议 Python 3.10+，并使用虚拟环境
+# 创建并激活 Python 3.12 虚拟环境（推荐）
+conda create -n stock python=3.12
+conda activate stock
+
+# 进入项目目录（将以下路径替换为你的实际路径）
+cd "你的路径"
+
+# 安装依赖
 pip install -r requirements.txt
+
+# 若遇到 cffi 安装报错，可先升级后重试
+pip install --upgrade cffi  
 ```
 
 > 主要依赖：`akshare`、`tushare`、`mootdx`、`pandas`、`tqdm` 等。
@@ -76,7 +86,8 @@ pip install -r requirements.txt
    ```
 
 ### Mootdx 运行前置步骤
-**注意，Mootdx下载的数据是未复权数据，会使选股结果存在偏差，请尽量使用Tushare**  
+
+**注意，Mootdx 下载的数据是未复权数据，会使选股结果存在偏差，请尽量使用 Tushare**
 使用 **Mootdx** 数据源前，需先探测最快行情服务器一次：
 
 ```bash
@@ -100,7 +111,7 @@ python fetch_kline.py \
   --workers 10             # 并发线程数
 ```
 
-*首跑* 下载完整历史；之后脚本会 **增量更新**。  
+*首跑* 下载完整历史；之后脚本会 **增量更新**。
 
 ### 运行选股
 
@@ -182,13 +193,13 @@ python select_stock.py \
 
 #### 2. PeakKDJSelector（填坑战法）
 
-| 参数               | 预设值    | 说明                                                              |
-| ---------------- | ------ | --------------------------------------------------------------- |
-| `j_threshold`    | `10`   | 当日 **J** 值必须 *小于* 该阈值                                           |
-| `max_window`     | `100`  | 参与检测的最大窗口（交易日）                                                  |
-| `fluc_threshold` | `0.03` | 当日收盘价与坑口的最大允许波动率                               |
+| 参数               | 预设值    | 说明                                                          |
+| ---------------- | ------ | ----------------------------------------------------------- |
+| `j_threshold`    | `10`   | 当日 **J** 值必须 *小于* 该阈值                                       |
+| `max_window`     | `100`  | 参与检测的最大窗口（交易日）                                              |
+| `fluc_threshold` | `0.03` | 当日收盘价与坑口的最大允许波动率                                            |
 | `gap_threshold`  | `0.2`  | 要求坑口高于区间最低收盘价的幅度（`oc_prev > min_close × (1+gap_threshold)`） |
-| `j_q_threshold`  | `0.10` | 当日 **J** 值需 *不高于* 最近窗口内该分位数                                     |
+| `j_q_threshold`  | `0.10` | 当日 **J** 值需 *不高于* 最近窗口内该分位数                                 |
 
 #### 3. BBIShortLongSelector（补票战法）
 
