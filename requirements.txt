@@ -1,18 +1,7 @@
-<<<<<<< HEAD
 akshare==1.17.7
 mootdx==0.11.7
 pandas==2.3.0
 tqdm==4.66.4
 tushare==1.4.21
 scipy==1.14.1
-=======
-akshare
-mootdx
-numpy
-optuna
-pandas
-tqdm
-tushare
-scipy
->>>>>>> 4c58f83 (打包到docker，配置成定时任务，每天下午5点执行更新数据和选股。)
 yfinance
