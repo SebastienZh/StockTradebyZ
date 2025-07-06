@@ -56,6 +56,23 @@ def _get_mktcap_ak() -> pd.DataFrame:
     df["mktcap"] = pd.to_numeric(df["mktcap"], errors="coerce")
     return df
 
+# --------------------------- 增加港股通所有股票 --------------------------- #
+
+def _get_hk_codes_ak() -> pd.DataFrame:
+    for attempt in range(1, 4):
+        try:
+            df = ak.stock_hk_ggt_components_em()
+            break
+        except Exception as e:
+            logger.warning("AKShare 获取港股通股票失败(%d/3): %s", attempt, e)
+            time.sleep(backoff := random.uniform(1, 3) * attempt)
+    else:
+        raise RuntimeError("AKShare 连续三次拉取港股通股票失败！")
+    
+    df = df[["代码", "名称"]].rename(columns={"代码": "code", "名称": "name"})
+    df["code"] = df["code"].astype(str) + ".HK"
+    return df
+
 # --------------------------- 股票池筛选 --------------------------- #
 
 def get_constituents(
@@ -67,12 +84,11 @@ def get_constituents(
     df = mktcap_df if mktcap_df is not None else _get_mktcap_ak()
 
     cond = (df["mktcap"] >= min_cap) & (df["mktcap"] <= max_cap)
+    cond &= ~df["code"].str.startswith(("8", "4", "9"))
     if small_player:
         cond &= ~df["code"].str.startswith(("300", "301", "688", "8", "4"))
 
     codes = df.loc[cond, "code"].str.zfill(6).tolist()
-    with open("data/selected_codes.json", "w", encoding="utf-8") as f:
-        json.dump(codes, f, ensure_ascii=False, indent=4)
 
     # 附加股票池 appendix.json
     try:
@@ -82,9 +98,19 @@ def get_constituents(
         appendix_codes = []
     codes = list(dict.fromkeys(appendix_codes + codes))  # 去重保持顺序
 
+    with open("logs/selected_codes.json", "w", encoding="utf-8") as f:
+        json.dump(codes, f, ensure_ascii=False, indent=4)
     logger.info("筛选得到 %d 只股票", len(codes))
     return codes
 
+def get_constituents_hk() -> List[str]:
+    hk_codes = _get_hk_codes_ak()
+    codes = list(dict.fromkeys(hk_codes["code"].tolist()))
+    with open("logs/selected_codes_hk.json", "w", encoding="utf-8") as f:
+        json.dump(codes, f, ensure_ascii=False, indent=4)
+    logger.info("筛选得到 %d 只股票", len(codes))
+    return codes
+    
 # --------------------------- 历史 K 线抓取 --------------------------- #
 COLUMN_MAP_HIST_AK = {
     "日期": "date",
@@ -553,6 +579,7 @@ def main():
     parser = argparse.ArgumentParser(description="按市值筛选 A 股并抓取历史 K 线")
     parser.add_argument("--datasource", choices=["tushare", "akshare", "mootdx", "yfinance"], default="yfinance", help="历史 K 线数据源")
     parser.add_argument("--frequency", type=int, choices=list(_FREQ_MAP.keys()), default=4, help="K线频率编码，参见说明")
+    parser.add_argument("--market", default="a", choices=["a", "hk"], help="市场，a: A股，hk: 港股")
     parser.add_argument("--symbol", type=str, help="指定股票代码，使用该参数会跳过股票池筛选参数")
     parser.add_argument("--exclude-gem", default=False, help="True则排除创业板/科创板/北交所")
     parser.add_argument("--min-mktcap", type=float, default=5e9, help="最小总市值（含），单位：元")
@@ -580,6 +607,8 @@ def main():
     # ---------- 指定股票代码 & 市值快照 & 股票池 ---------- #
     if args.symbol:
         codes = [args.symbol]
+    elif args.market == "hk":
+        codes = get_constituents_hk()
     else:
         mktcap_df = _get_mktcap_ak()    
         codes_from_filter = get_constituents(
