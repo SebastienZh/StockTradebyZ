@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+from datetime import timedelta
 import json
 import logging
 import random
@@ -264,7 +265,7 @@ def _get_kline_yfinance(code: str, start: str, end: str, adjust: str, freq_code:
     
     try:
         adj_start_date = start_ts.strftime('%Y-%m-%d')
-        adj_end_date = end_ts.strftime('%Y-%m-%d')
+        adj_end_date = (end_ts + timedelta(days=1)).strftime('%Y-%m-%d') # 因为yfinance的end_date是包含的，所以需要加1天
 
         with yf_lock:
             df = yf.download(symbol, start=adj_start_date, end=adj_end_date, interval="1d", group_by="ticker", auto_adjust=True, progress=False)
@@ -313,7 +314,7 @@ def _get_kline_batch_yfinance(codes: List[str], start: str, end: str, adjust: st
     
     try:
         adj_start_date = start_ts.strftime('%Y-%m-%d')
-        adj_end_date = end_ts.strftime('%Y-%m-%d')
+        adj_end_date = (end_ts + timedelta(days=1)).strftime('%Y-%m-%d') # 因为yfinance的end_date是包含的，所以需要加1天
 
         with yf_lock:
             df = yf.download(symbols, start=adj_start_date, end=adj_end_date, interval="1d", group_by="ticker", auto_adjust=True, progress=False)
