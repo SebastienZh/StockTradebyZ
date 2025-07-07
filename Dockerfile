@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y \
     cron \
     && rm -rf /var/lib/apt/lists/*
 
+# 创建cron日志目录
+RUN mkdir -p /var/log/cron
+
 # 复制依赖文件
 COPY requirements.txt .
 
