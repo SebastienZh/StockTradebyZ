@@ -47,16 +47,25 @@ EOF
 chmod +x /app/daily_task.sh
 
 # 创建cron任务（每天下午5点执行）
-echo "0 17 * * * /app/daily_task.sh" > /etc/cron.d/daily_task
-
-# 给cron文件设置权限
-chmod 0644 /etc/cron.d/daily_task
+echo "0 17 * * * /app/daily_task.sh" | crontab -
 
 # 创建cron日志文件
 touch /app/logs/cron.log
 
 # 启动cron服务
 service cron start
+
+# 等待cron服务启动
+sleep 2
+
+# 检查cron服务状态
+if service cron status > /dev/null 2>&1; then
+    echo "Cron服务已启动"
+else
+    echo "Cron服务启动失败，尝试重新启动..."
+    service cron restart
+    sleep 2
+fi
 
 # 显示cron任务
 echo "已设置定时任务："
