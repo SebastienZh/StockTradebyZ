@@ -52,12 +52,20 @@ tail -f logs/select_stock.log
 
 1. **fetch_kline任务**：
    ```bash
+   # 获取A股市场，市值大于20亿的股票k线数据，时间自20240701
    python fetch_kline.py --datasource yfinance --frequency 4 --min-mktcap 2e9 --start 20240701 --end today --out ./data --workers 1
+   # 获取HK港股通市场所有股票k线数据，时间自20240701
+   python fetch_kline.py --datasource yfinance --frequency 4 --start 20240701 --end today --out ./data.hk --workers 1 --market hk 
    ```
 
 2. **select_stock任务**：
    ```bash
-   python select_stock.py --data-dir ./data --config ./configs.json --date ${today}
+   python select_stock.py --data-dir ./data --config ./configs.json --date $TODAY
+   python select_stock.py --data-dir ./data.hk --config ./configs_hk.json --date $TODAY
+   ```
+3. **选股结果**
+   ```bash
+   cat logs/select_stock.log
    ```
 
 ## 手动执行任务
@@ -74,13 +82,17 @@ docker exec -it stock-trade-by-z bash
 # 或者单独执行某个任务
 python fetch_kline.py --datasource yfinance --frequency 4 --min-mktcap 2e9 --start 20240701 --end today --out ./data --workers 1
 python select_stock.py --data-dir ./data --config ./configs.json --date $(date +%Y-%m-%d)
+
+# 针对HK港股通
+python fetch_kline.py --datasource yfinance --frequency 4 --start 20240701 --end today --out ./data.hk --workers 1 --market hk
+python select_stock.py --data-dir ./data.hk --config ./configs_hk.json --date $(date +%Y-%m-%d)
 ```
 
 ## 数据持久化
 
 - **数据目录**：`./data` - 存储股票K线数据
 - **日志目录**：`./logs` - 存储执行日志
-- **配置文件**：`./configs.json` - 选股策略配置
+- **配置文件**：`./configs.json` `./configs_hk.json` - 选股策略配置
 
 这些目录都通过volume挂载到宿主机，容器重启后数据不会丢失。
 
@@ -88,7 +100,7 @@ python select_stock.py --data-dir ./data --config ./configs.json --date $(date +
 
 ### 修改选股策略
 
-编辑 `configs.json` 文件，修改后重启容器：
+编辑 `configs.json` 或 `./configs_hk.json` 文件，修改后重启容器：
 
 ```bash
 docker-compose restart
