@@ -14,8 +14,11 @@ docker-compose up -d
 docker build -t stock-trade-by-z .
 docker run -d --name stock-trade-by-z \
   -v $(pwd)/data:/app/data \
+  -v $(pwd)/data.hk:/app/data.hk
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/configs.json:/app/configs.json \
+  -v $(pwd)/configs_hk.json:/app/configs_hk.json \
+  -v $(pwd)/appendix.json:/app/appendix.json \
   -e TZ=Asia/Shanghai \
   stock-trade-by-z
 ```
