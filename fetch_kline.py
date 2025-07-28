@@ -6,7 +6,7 @@ Changes compared with the original version
 1. **Batch download for Tushare** – instead of requesting one stock per call we now
    fetch up to `--batch-size` stocks at once via `pro.daily`, which natively accepts
    a comma‑separated ticker list.
-2. **Longer back‑off after failures** – each retry now sleeps a **random 10‑20 s**
+2. **Longer back‑off after failures** – each retry now sleeps a **random 10‑20 s**
    (multiplied by the attempt number) to mitigate the server‑side rate limit.
 
 Only the Tushare path is affected; AKShare and mootdx fetching logic is left
@@ -33,6 +33,15 @@ from mootdx.quotes import Quotes
 from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
+
+# --------------------------- 全局变量 --------------------------- #
+# 存储外部设置的Tushare Token
+_external_ts_token = None
+
+def set_tushare_token(token: str):
+    """设置外部Tushare Token"""
+    global _external_ts_token
+    _external_ts_token = token
 
 # --------------------------- 全局日志配置 --------------------------- #
 LOG_FILE = Path("fetch.log")
@@ -200,46 +209,65 @@ def _get_kline_akshare(code: str, start: str, end: str, adjust: str) -> pd.DataF
         .rename(columns=COLUMN_MAP_HIST_AK)
         .assign(date=lambda x: pd.to_datetime(x["date"]))
     )
-    df[[c for c in df.columns if c != "date"]] = df[[c for c in df.columns if c != "date"]].apply(
-        pd.to_numeric, errors="coerce"
-    )
-    df = df[["date", "open", "close", "high", "low", "volume"]]
+    numeric_cols = [c for c in df.columns if c != "date"]
+    df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
     return df.sort_values("date").reset_index(drop=True)
 
-# ---------- Mootdx 工具函数 ---------- #
+# ---------- mootdx 工具函数 ---------- #
 
 def _get_kline_mootdx(code: str, start: str, end: str, adjust: str, freq_code: int) -> pd.DataFrame:
-    symbol = code.zfill(6)
-    freq = _FREQ_MAP.get(freq_code, "day")
+    """
+    freq_code: 0=5m, 1=15m, 2=30m, 3=1h, 4=day, 5=week, 6=mon, 7=1m, 8=1m, 9=day, 10=3mon, 11=year
+    """
+    market = 1 if code.startswith(("60", "68", "9")) else 0
     client = Quotes.factory(market="std")
-    try:
-        df = client.bars(symbol=symbol, frequency=freq, adjust=adjust or None)
-    except Exception as e:
-        logger.warning("Mootdx 拉取 %s 失败: %s", code, e)
+
+    for attempt in range(1, 4):
+        try:
+            df = client.bars(symbol=code, frequency=freq_code, start=start, end=end, adjust=adjust)
+            break
+        except Exception as e:
+            logger.warning("mootdx 拉取 %s 失败(%d/3): %s", code, attempt, e)
+            time.sleep(random.uniform(1, 2) * attempt)
+    else:
         return pd.DataFrame()
+
     if df is None or df.empty:
         return pd.DataFrame()
 
-    df = df.rename(
-        columns={"datetime": "date", "open": "open", "high": "high", "low": "low", "close": "close", "vol": "volume"}
-    )
-    df["date"] = pd.to_datetime(df["date"]).dt.normalize()
-    start_ts = pd.to_datetime(start, format="%Y%m%d")
-    end_ts = pd.to_datetime(end, format="%Y%m%d")
-    df = df[(df["date"].dt.date >= start_ts.date()) & (df["date"].dt.date <= end_ts.date())].copy()
-    df = df.sort_values("date").reset_index(drop=True)
-    return df[["date", "open", "close", "high", "low", "volume"]]
+    df = df.rename(columns={"datetime": "date", "vol": "volume"})
+    df["date"] = pd.to_datetime(df["date"])
+    numeric_cols = [c for c in df.columns if c != "date"]
+    df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+    return df.sort_values("date").reset_index(drop=True)
 
-# --------------------------- 数据校验 & 公共工具 --------------------------- #
+# --------------------------- 数据验证 --------------------------- #
 
 def validate(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.drop_duplicates(subset="date").sort_values("date").reset_index(drop=True)
-    if df["date"].isna().any():
-        raise ValueError("存在缺失日期！")
-    if (df["date"] > pd.Timestamp.today()).any():
-        raise ValueError("数据包含未来日期，可能抓取错误！")
-    return df
-
+    """基础数据验证和清洗"""
+    if df.empty:
+        return df
+    
+    # 删除空值行
+    df = df.dropna()
+    
+    # 确保数值列为正数
+    numeric_cols = ["open", "close", "high", "low", "volume"]
+    for col in numeric_cols:
+        if col in df.columns:
+            df = df[df[col] > 0]
+    
+    # 确保 high >= low, high >= open, high >= close, low <= open, low <= close
+    if all(col in df.columns for col in ["open", "close", "high", "low"]):
+        df = df[
+            (df["high"] >= df["low"]) &
+            (df["high"] >= df["open"]) &
+            (df["high"] >= df["close"]) &
+            (df["low"] <= df["open"]) &
+            (df["low"] <= df["close"])
+        ]
+    
+    return df.reset_index(drop=True)
 
 def drop_dup_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[:, ~df.columns.duplicated()]
@@ -368,7 +396,12 @@ def main():
 
     # ---------- Token 处理 ---------- #
     if args.datasource == "tushare":
-        ts_token = " "  # 填入你的token
+        # 优先使用外部设置的token，如果没有则使用硬编码的token
+        if _external_ts_token:
+            ts_token = _external_ts_token
+        else:
+            ts_token = "6e7a03ac0784b443000bceac331a41891f3b8e994d4c62e3cd78a0c1"  # 填入你的token
+        
         ts.set_token(ts_token)
         global pro
         pro = ts.pro_api()
