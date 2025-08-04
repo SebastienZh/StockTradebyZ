@@ -52,7 +52,7 @@
       "activate": true,
       "params": {
         "j_threshold": 5,
-        "j_q_threshold": 0.10,
+        "j_q_threshold": 0.05,
         "up_threshold": 3.0,
         "volume_threshold": 0.6667,
         "offset": 15,
@@ -68,8 +68,8 @@
         "j_threshold": 10,                 
         "max_window": 120,                
         "fluc_threshold": 0.05,
-        "j_q_threshold": 0.10,
-        "gap_threshold": 0.2
+        "j_q_threshold": 0.05,
+        "gap_threshold": 0.5
       }
     }
   ]
