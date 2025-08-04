@@ -1,5 +1,6 @@
 .vscode
 data
+logs
 data.*
 __pycache__
 fetch.log
