@@ -5,11 +5,11 @@
       "alias": "少妇战法",
       "activate": true,
       "params": {
-        "j_threshold": 10,
+        "j_threshold": 1,
         "bbi_min_window": 20,
         "max_window": 60,
-        "price_range_pct": 1,
-        "bbi_q_threshold": 0.3,
+        "price_range_pct": 1.5,
+        "bbi_q_threshold": 0.15,
         "j_q_threshold": 0.10
       }
     },
@@ -57,7 +57,7 @@
         "volume_threshold": 0.6667,
         "offset": 15,
         "max_window": 60,
-        "price_range_pct": 1
+        "price_range_pct": 1.5
       }
     },
     {
