@@ -1,0 +1,44 @@
+.vscode
+data
+logs
+data.*
+__pycache__
+fetch.log
+select_results.log
+
+# Python相关
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# 数据目录（会在容器中创建）
+data/
+test/
+logs/
+
+# 其他
+.DS_Store
+*.swp
+*.swo
+*~
+
+# 临时文件
+*.tmp
+*.temp 

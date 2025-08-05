@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  stock-trade:
+    build: .
+    container_name: stock-trade-by-z
+    volumes:
+      # 挂载数据目录，保持数据持久化
+      - ./data:/app/data
+      - ./data.hk:/app/data.hk
+      # 挂载日志目录，方便查看日志
+      - ./logs:/app/logs
+      # 挂载配置文件，方便修改配置
+      - ./configs.json:/app/configs.json
+      - ./configs_hk.json:/app/configs_hk.json
+      - ./appendix.json:/app/appendix.json
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    # 如果需要手动执行任务，可以进入容器
+    # docker exec -it stock-trade-by-z bash 
