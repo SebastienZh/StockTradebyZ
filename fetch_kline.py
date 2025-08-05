@@ -4,6 +4,7 @@ import argparse
 import datetime as dt
 import json
 import logging
+import os
 import random
 import sys
 import time
@@ -301,6 +302,26 @@ def main():
     parser.add_argument("--workers", type=int, default=3, help="并发线程数")
     args = parser.parse_args()
 
+    # ---------- 抓取前清理所有csv最后一行 ---------- #
+    print("正在清理所有csv最后一行...")
+    def remove_last_row_from_csvs(data_dir):
+        if not os.path.exists(data_dir):
+            logger.info("输出目录 %s 不存在，跳过清理", data_dir)
+            return
+        
+        for fname in os.listdir(data_dir):
+            if fname.endswith(".csv"):
+                fpath = os.path.join(data_dir, fname)
+                try:
+                    df = pd.read_csv(fpath)
+                    if len(df) > 0:
+                        df = df.iloc[:-1]
+                        df.to_csv(fpath, index=False)
+                        logger.debug("已清理 %s 的最后一行", fname)
+                except Exception as e:
+                    logger.warning("处理 %s 时出错: %s", fpath, e)
+    remove_last_row_from_csvs(args.out)
+
     # ---------- Token 处理 ---------- #
     if args.datasource == "tushare":
         ts_token = " "  # 在这里补充token
@@ -364,3 +385,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
