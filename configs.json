@@ -16,7 +16,7 @@
     {
       "class": "BBIShortLongSelector",
       "alias": "补票战法",
-      "activate": true,
+      "activate": false,
       "params": {
         "n_short": 3,
         "n_long": 21,
@@ -29,7 +29,7 @@
     {
       "class": "BreakoutVolumeKDJSelector",
       "alias": "TePu战法",
-      "activate": true,
+      "activate": false,
       "params": {
         "j_threshold": 1,
         "j_q_threshold": 0.10,
@@ -46,7 +46,7 @@
       "activate": true,                 
       "params": {
         "j_threshold": 10,                 
-        "max_window": 100,                
+        "max_window": 150,
         "fluc_threshold": 0.03,
         "j_q_threshold": 0.10,
         "gap_threshold": 0.2

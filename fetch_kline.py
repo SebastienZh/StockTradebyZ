@@ -137,13 +137,14 @@ def _get_kline_tushare(code: str, start: str, end: str, adjust: str) -> pd.DataF
         return pd.DataFrame()
 
     df = df.rename(columns={"trade_date": "date", "vol": "volume"})[
-        ["date", "open", "close", "high", "low", "volume"]
+        ["date", "open", "close", "high", "low", "volume","amount","pct_chg"]
     ].copy()
+    df.reset_index(drop=True).set_index("date")
     df["date"] = pd.to_datetime(df["date"])
     df[[c for c in df.columns if c != "date"]] = df[[c for c in df.columns if c != "date"]].apply(
         pd.to_numeric, errors="coerce"
-    )    
-    return df.sort_values("date").reset_index(drop=True)
+    )
+    return df.sort_values("date")
 
 # ---------- AKShare 工具函数 ---------- #
 
@@ -285,6 +286,30 @@ def fetch_one(
     else:
         logger.error("%s 三次抓取均失败，已跳过！", code)
 
+def check_date_continuity(df: pd.DataFrame, start_date: str, end_date: str):
+    """
+    检查数据集中是否存在缺失的交易日（与全市场交易日历对比）。
+    注意：这里我们生成一个简化的连续日期范围作为示例，
+    一个更严谨的方法是获取真实的A股交易日历。
+    """
+    # 获取数据中所有唯一的日期
+    data_dates = df.index.get_level_values('date').unique()
+
+    # 生成一个从开始到结束的完整日期范围
+    # freq='B' 表示只包含工作日 (Business day)
+    full_calendar = pd.date_range(start=start_date, end=end_date, freq='B')
+
+    # 找出在完整日历中但不在我们数据中的日期
+    missing_dates = full_calendar.difference(data_dates)
+
+    if not missing_dates.empty:
+        print(f"Warning: Found {len(missing_dates)} potentially missing trading dates.")
+        print("First 10 missing dates:", missing_dates[:10].strftime('%Y-%m-%d').tolist())
+    else:
+        print("Data continuity check passed. No obvious missing business days found.")
+
+# --- 使用示例 ---
+# check_date_continuity(clean_kline_data, '2023-01-01', '2023-06-30')
 
 # ---------- 主入口 ---------- #
 
@@ -303,7 +328,7 @@ def main():
 
     # ---------- Token 处理 ---------- #
     if args.datasource == "tushare":
-        ts_token = " "  # 在这里补充token
+        ts_token = "36383c6938c5d0654dbb4746347337f1bd343861188b207d3ad77208"  # 在这里补充token
         ts.set_token(ts_token)
         global pro
         pro = ts.pro_api()
