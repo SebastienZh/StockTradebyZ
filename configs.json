@@ -8,9 +8,29 @@
         "j_threshold": -5,
         "bbi_min_window": 20,
         "max_window": 60,
-        "price_range_pct": 0.5,
-        "bbi_q_threshold": 0.1,
+        "price_range_pct": 1,
+        "bbi_q_threshold": 0.3,
         "j_q_threshold": 0.10
+      }
+    },
+    {
+      "class": "SuperB1Selector",
+      "alias": "SuperB1战法",
+      "activate": true,
+      "params": {
+        "lookback_n": 10,
+        "close_vol_pct": 0.02,
+        "price_drop_pct": 0.02,
+        "j_threshold": 10,
+        "j_q_threshold": 0.10,
+        "B1_params": { 
+          "j_threshold": 10,
+          "bbi_min_window": 20,
+          "max_window": 60,
+          "price_range_pct": 1,
+          "bbi_q_threshold": 0.3,
+          "j_q_threshold": 0.10
+        }
       }
     },
     {
@@ -41,7 +61,7 @@
         "volume_threshold": 0.6667,
         "offset": 15,
         "max_window": 60,
-        "price_range_pct": 0.5
+        "price_range_pct": 1
       }
     },
     {
