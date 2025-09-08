@@ -1,0 +1,12 @@
+.env
+data/*
+*.pyc
+logs/*
+debug/*
+data-bfq/*
+data_backup/*
+data_backup_strict/*
+backtest_result/*
+backtest_result_week/*
+data*/
+selection_result/*

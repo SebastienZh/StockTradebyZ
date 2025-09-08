@@ -7,6 +7,7 @@ import pandas as pd
 
 # --------------------------- 通用指标 --------------------------- #
 
+
 def compute_kdj(df: pd.DataFrame, n: int = 9) -> pd.DataFrame:
     if df.empty:
         return df.assign(K=np.nan, D=np.nan, J=np.nan)
@@ -70,7 +71,7 @@ def bbi_deriv_uptrend(
     令最新交易日为 T，在区间 [T-w+1, T]（w 自适应，w ≥ min_window 且 ≤ max_window）
     内，先将 BBI 归一化：BBI_norm(t) = BBI(t) / BBI(T-w+1)。
 
-    再计算一阶差分 Δ(t) = BBI_norm(t) - BBI_norm(t-1)。  
+    再计算一阶差分 Δ(t) = BBI_norm(t) - BBI_norm(t-1)。
     若 Δ(t) 的前 q_threshold 分位数 ≥ 0，则认为该窗口通过；只要存在
     **最长** 满足条件的窗口即可返回 True。q_threshold=0 时退化为
     “全程单调不降”（旧版行为）。
@@ -97,9 +98,9 @@ def bbi_deriv_uptrend(
 
     # 自最长窗口向下搜索，找到任一满足条件的区间即通过
     for w in range(longest, min_window - 1, -1):
-        seg = bbi.iloc[-w:]                # 区间 [T-w+1, T]
-        norm = seg / seg.iloc[0]           # 归一化
-        diffs = np.diff(norm.values)       # 一阶差分
+        seg = bbi.iloc[-w:]  # 区间 [T-w+1, T]
+        norm = seg / seg.iloc[0]  # 归一化
+        diffs = np.diff(norm.values)  # 一阶差分
         if np.quantile(diffs, q_threshold) >= 0:
             return True
     return False
@@ -116,7 +117,7 @@ def _find_peaks(
     rel_height: float = 0.5,
     **kwargs: Any,
 ) -> pd.DataFrame:
-    
+
     if column not in df.columns:
         raise KeyError(f"'{column}' not found in DataFrame columns: {list(df.columns)}")
 
@@ -167,7 +168,7 @@ class BBIKDJSelector:
         self.max_window = max_window
         self.price_range_pct = price_range_pct
         self.bbi_q_threshold = bbi_q_threshold  # ← 原 q_threshold
-        self.j_q_threshold = j_q_threshold      # ← 新增
+        self.j_q_threshold = j_q_threshold  # ← 新增
 
     # ---------- 单支股票过滤 ---------- #
     def _passes_filters(self, hist: pd.DataFrame) -> bool:
@@ -208,9 +209,7 @@ class BBIKDJSelector:
         return hist["DIF"].iloc[-1] > 0
 
     # ---------- 多股票批量 ---------- #
-    def select(
-        self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]
-    ) -> List[str]:
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
         picks: List[str] = []
         for code, df in data.items():
             hist = df[df["date"] <= date]
@@ -341,7 +340,7 @@ class SuperB1Selector:
 
 class PeakKDJSelector:
     """
-    Peaks + KDJ 选股器    
+    Peaks + KDJ 选股器
     """
 
     def __init__(
@@ -355,11 +354,11 @@ class PeakKDJSelector:
         self.j_threshold = j_threshold
         self.max_window = max_window
         self.fluc_threshold = fluc_threshold  # 当日↔peak_(t-n) 波动率上限
-        self.gap_threshold = gap_threshold    # oc_prev 必须高于区间最低收盘价的比例
+        self.gap_threshold = gap_threshold  # oc_prev 必须高于区间最低收盘价的比例
         self.j_q_threshold = j_q_threshold
 
     # ---------- 单支股票过滤 ---------- #
-        # ---------- 单支股票过滤 ---------- #
+    # ---------- 单支股票过滤 ---------- #
     def _passes_filters(self, hist: pd.DataFrame) -> bool:
         if hist.empty:
             return False
@@ -374,24 +373,24 @@ class PeakKDJSelector:
             distance=6,
             prominence=0.5,
         )
-        
-        # 至少两个峰      
+
+        # 至少两个峰
         date_today = hist.iloc[-1]["date"]
         peaks_df = peaks_df[peaks_df["date"] < date_today]
-        if len(peaks_df) < 2:               
+        if len(peaks_df) < 2:
             return False
 
-        peak_t = peaks_df.iloc[-1]          # 最新一个峰
+        peak_t = peaks_df.iloc[-1]  # 最新一个峰
         peaks_list = peaks_df.reset_index(drop=True)
         oc_t = peak_t.oc_max
         total_peaks = len(peaks_list)
 
         # 2. 回溯寻找 peak_(t-n)
-        target_peak = None        
+        target_peak = None
         for idx in range(total_peaks - 2, -1, -1):
             peak_prev = peaks_list.loc[idx]
             oc_prev = peak_prev.oc_max
-            if oc_t <= oc_prev:             # 要求 peak_t > peak_(t-n)
+            if oc_t <= oc_prev:  # 要求 peak_t > peak_(t-n)
                 continue
 
             # 只有当“总峰数 ≥ 3”时才检查区间内其他峰 oc_max
@@ -405,12 +404,12 @@ class PeakKDJSelector:
             mask = (hist["date"] > date_prev) & (hist["date"] < peak_t.date)
             min_close = hist.loc[mask, "close"].min()
             if pd.isna(min_close):
-                continue                    # 区间无数据
+                continue  # 区间无数据
             if oc_prev <= min_close * (1 + self.gap_threshold):
                 continue
 
             target_peak = peak_prev
-            
+
             break
 
         if target_peak is None:
@@ -449,12 +448,13 @@ class PeakKDJSelector:
             if self._passes_filters(hist):
                 picks.append(code)
         return picks
-    
+
 
 class BBIShortLongSelector:
     """
     BBI 上升 + 短/长期 RSV 条件 + DIF > 0 选股器
     """
+
     def __init__(
         self,
         n_short: int = 3,
@@ -463,6 +463,11 @@ class BBIShortLongSelector:
         bbi_min_window: int = 90,
         max_window: int = 150,
         bbi_q_threshold: float = 0.05,
+        # RSV 条件参数
+        rsv_long_start_end_threshold: float = 90.0,  # 长期RSV收尾阈值
+        rsv_short_start_end_threshold: float = 90.0,  # 短期RSV首尾阈值
+        rsv_short_low_threshold: float = 25.0,  # 短期RSV低点阈值
+        rsv_long_min_threshold: float = 70.0,  # 长期RSV最低点阈值
     ) -> None:
         if m < 2:
             raise ValueError("m 必须 ≥ 2")
@@ -471,7 +476,12 @@ class BBIShortLongSelector:
         self.m = m
         self.bbi_min_window = bbi_min_window
         self.max_window = max_window
-        self.bbi_q_threshold = bbi_q_threshold   # 新增参数
+        self.bbi_q_threshold = bbi_q_threshold
+        # RSV 条件参数
+        self.rsv_long_start_end_threshold = rsv_long_start_end_threshold
+        self.rsv_short_start_end_threshold = rsv_short_start_end_threshold
+        self.rsv_short_low_threshold = rsv_short_low_threshold
+        self.rsv_long_min_threshold = rsv_long_min_threshold
 
     # ---------- 单支股票过滤 ---------- #
     def _passes_filters(self, hist: pd.DataFrame) -> bool:
@@ -492,18 +502,36 @@ class BBIShortLongSelector:
         hist["RSV_long"] = compute_rsv(hist, self.n_long)
 
         if len(hist) < self.m:
-            return False                        # 数据不足
+            return False  # 数据不足
 
-        win = hist.iloc[-self.m :]              # 最近 m 天
-        long_ok = (win["RSV_long"] >= 80).all() # 长期 RSV 全 ≥ 80
+        win = hist.iloc[-self.m :]  # 最近 m 天
 
+        # 1. 长期RSV 收尾都 ≥ 90
+        long_series = win["RSV_long"]
+        long_start_end_ok = (
+            long_series.iloc[0] >= self.rsv_long_start_end_threshold
+            and long_series.iloc[-1] >= self.rsv_long_start_end_threshold
+        )
+
+        # 2. 短期RSV首尾都 ≥ 90
         short_series = win["RSV_short"]
         short_start_end_ok = (
-            short_series.iloc[0] >= 80 and short_series.iloc[-1] >= 80
+            short_series.iloc[0] >= self.rsv_short_start_end_threshold
+            and short_series.iloc[-1] >= self.rsv_short_start_end_threshold
         )
-        short_has_below_20 = (short_series < 20).any()
 
-        if not (long_ok and short_start_end_ok and short_has_below_20):
+        # 3. 短期RSV期间有过 < 25
+        short_has_below_threshold = (short_series < self.rsv_short_low_threshold).any()
+
+        # 4. 长期RSV最低点不低于70
+        long_min_ok = long_series.min() >= self.rsv_long_min_threshold
+
+        if not (
+            long_start_end_ok
+            and short_start_end_ok
+            and short_has_below_threshold
+            and long_min_ok
+        ):
             return False
 
         # 3. MACD：DIF > 0 -------------------
@@ -522,11 +550,7 @@ class BBIShortLongSelector:
             if hist.empty:
                 continue
             # 预留足够长度：RSV 计算窗口 + BBI 检测窗口 + m
-            need_len = (
-                max(self.n_short, self.n_long)
-                + self.bbi_min_window
-                + self.m
-            )
+            need_len = max(self.n_short, self.n_long) + self.bbi_min_window + self.m
             hist = hist.tail(max(need_len, self.max_window))
             if self._passes_filters(hist):
                 picks.append(code)
@@ -535,7 +559,7 @@ class BBIShortLongSelector:
 
 class BreakoutVolumeKDJSelector:
     """
-    放量突破 + KDJ + DIF>0 + 收盘价波动幅度 选股器   
+    放量突破 + KDJ + DIF>0 + 收盘价波动幅度 选股器
     """
 
     def __init__(
@@ -546,7 +570,7 @@ class BreakoutVolumeKDJSelector:
         offset: int = 15,
         max_window: int = 120,
         price_range_pct: float = 10.0,
-        j_q_threshold: float = 0.10,        # ← 新增
+        j_q_threshold: float = 0.10,  # ← 新增
     ) -> None:
         self.j_threshold = j_threshold
         self.up_threshold = up_threshold
@@ -620,9 +644,7 @@ class BreakoutVolumeKDJSelector:
         return False
 
     # ---------- 多股票批量 ---------- #
-    def select(
-        self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]
-    ) -> List[str]:
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
         picks: List[str] = []
         for code, df in data.items():
             hist = df[df["date"] <= date]
