@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 import importlib
 import json
 import logging
 import sys
 from pathlib import Path
+import time
 from typing import Any, Dict, Iterable, List
 
 import pandas as pd
@@ -25,6 +27,7 @@ logger = logging.getLogger("select")
 
 # ---------- 工具 ----------
 
+
 def load_data(data_dir: Path, codes: Iterable[str]) -> Dict[str, pd.DataFrame]:
     frames: Dict[str, pd.DataFrame] = {}
     for code in codes:
@@ -34,6 +37,38 @@ def load_data(data_dir: Path, codes: Iterable[str]) -> Dict[str, pd.DataFrame]:
             continue
         df = pd.read_csv(fp, parse_dates=["date"]).sort_values("date")
         frames[code] = df
+    return frames
+
+
+def load_single_csv(fp: Path):
+    """单文件读取函数，返回 (code, df) 或 None"""
+    code = fp.stem
+    if not fp.exists():
+        logger.warning("%s 不存在，跳过", fp.name)
+        return None
+    df = pd.read_csv(fp, parse_dates=["date"]).sort_values("date")
+    if df.empty:
+        return None
+    return code, df
+
+
+def load_data_mp(
+    data_dir: Path, codes: Iterable[str], max_workers: int = 4
+) -> Dict[str, pd.DataFrame]:
+    """多进程读取多个 CSV 文件"""
+    fps = [data_dir / f"{code}.csv" for code in codes]
+    frames: Dict[str, pd.DataFrame] = {}
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        results = executor.map(load_single_csv, fps)
+
+    # 安全迭代，跳过 None
+    for res in results:
+        if res is None:
+            continue
+        code, df = res
+        frames[code] = df
+
     return frames
 
 
@@ -77,6 +112,7 @@ def instantiate_selector(cfg: Dict[str, Any]):
 
 # ---------- 主函数 ----------
 
+
 def main():
     p = argparse.ArgumentParser(description="Run selectors defined in configs.json")
     p.add_argument("--data-dir", default="./data", help="CSV 行情目录")
@@ -100,7 +136,16 @@ def main():
         logger.error("股票池为空！")
         sys.exit(1)
 
+    start = time.time()
+    print(f"待加载数据总数:{len(codes)}")
+    print("数据加载中...")
+
     data = load_data(data_dir, codes)
+
+    end = time.time()
+    print(f"加载数据耗时 {end - start:.4f} 秒")
+    print()
+
     if not data:
         logger.error("未能加载任何行情数据")
         sys.exit(1)
