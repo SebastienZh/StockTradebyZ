@@ -1,0 +1,3 @@
+2025-10-06 21:53:35,500 [INFO] fetch_kline.py:139 从 stocklist.csv 读取到 3068 只股票（排除板块：bj,gem,star）
+2025-10-06 21:53:35,501 [INFO] fetch_kline.py:217 开始抓取 3068 支股票 | 数据源:Tushare(日线,qfq) | 日期:20200101 → 20251006 | 排除:bj,gem,star
+2025-10-06 22:01:18,384 [INFO] fetch_kline.py:237 全部任务完成，数据已保存至 D:\CodeBase\StockTradebyZ\data

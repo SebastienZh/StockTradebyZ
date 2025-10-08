@@ -14,6 +14,28 @@
       }
     },
     {
+      "class": "TwoLineSelector",
+      "alias": "双线战法",
+      "activate": true,
+      "params": {
+        "j_threshold": 15,
+        "max_window": 120,
+        "j_q_threshold": 0.10
+      }
+    },
+    {
+      "class": "B2Selector",
+      "alias": "B2战法",
+      "activate": true,
+      "params": {
+        "j_threshold": 55,
+        "up_volume_ratio": 0.04,
+        "max_window": 120,
+        "b1_j_threshold": 20,
+        "j_q_threshold": 0.10
+      }
+    },
+    {
       "class": "SuperB1Selector",
       "alias": "SuperB1战法",
       "activate": true,
