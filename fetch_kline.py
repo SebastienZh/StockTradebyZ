@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import json
 import logging
 import random
 import sys
@@ -11,11 +10,10 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
+import os
 
-import akshare as ak
 import pandas as pd
 import tushare as ts
-from mootdx.quotes import Quotes
 from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
@@ -30,201 +28,80 @@ logging.basicConfig(
         logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8"),
     ],
 )
-logger = logging.getLogger("fetch_mktcap")
+logger = logging.getLogger("fetch_from_stocklist")
 
-# 屏蔽第三方库多余 INFO 日志
-for noisy in ("httpx", "urllib3", "_client", "akshare"):
-    logging.getLogger(noisy).setLevel(logging.WARNING)
+# --------------------------- 限流/封禁处理配置 --------------------------- #
+COOLDOWN_SECS = 600
+BAN_PATTERNS = (
+    "访问频繁", "请稍后", "超过频率", "频繁访问",
+    "too many requests", "429",
+    "forbidden", "403",
+    "max retries exceeded"
+)
 
-# --------------------------- 市值快照 --------------------------- #
+def _looks_like_ip_ban(exc: Exception) -> bool:
+    msg = (str(exc) or "").lower()
+    return any(pat in msg for pat in BAN_PATTERNS)
 
-def _get_mktcap_ak() -> pd.DataFrame:
-    """实时快照，返回列：code, mktcap（单位：元）"""
-    for attempt in range(1, 4):
-        try:
-            df = ak.stock_zh_a_spot_em()
-            break
-        except Exception as e:
-            logger.warning("AKShare 获取市值快照失败(%d/3): %s", attempt, e)
-            time.sleep(backoff := random.uniform(1, 3) * attempt)
-    else:
-        raise RuntimeError("AKShare 连续三次拉取市值快照失败！")
+class RateLimitError(RuntimeError):
+    """表示命中限流/封禁，需要长时间冷却后重试。"""
+    pass
 
-    df = df[["代码", "总市值"]].rename(columns={"代码": "code", "总市值": "mktcap"})
-    df["mktcap"] = pd.to_numeric(df["mktcap"], errors="coerce")
-    return df
+def _cool_sleep(base_seconds: int) -> None:
+    jitter = random.uniform(0.9, 1.2)
+    sleep_s = max(1, int(base_seconds * jitter))
+    logger.warning("疑似被限流/封禁，进入冷却期 %d 秒...", sleep_s)
+    time.sleep(sleep_s)
 
-# --------------------------- 股票池筛选 --------------------------- #
+# --------------------------- 历史K线（Tushare 日线，固定qfq） --------------------------- #
+pro: Optional[ts.pro_api] = None  # 模块级会话
 
-def get_constituents(
-    min_cap: float,
-    max_cap: float,
-    small_player: bool,
-    mktcap_df: Optional[pd.DataFrame] = None,
-) -> List[str]:
-    df = mktcap_df if mktcap_df is not None else _get_mktcap_ak()
-
-    cond = (df["mktcap"] >= min_cap) & (df["mktcap"] <= max_cap)
-    if small_player:
-        cond &= ~df["code"].str.startswith(("300", "301", "688", "8", "4"))
-
-    codes = df.loc[cond, "code"].str.zfill(6).tolist()
-
-    # 附加股票池 appendix.json
-    try:
-        with open("appendix.json", "r", encoding="utf-8") as f:
-            appendix_codes = json.load(f)["data"]
-    except FileNotFoundError:
-        appendix_codes = []
-    codes = list(dict.fromkeys(appendix_codes + codes))  # 去重保持顺序
-
-    logger.info("筛选得到 %d 只股票", len(codes))
-    return codes
-
-# --------------------------- 历史 K 线抓取 --------------------------- #
-COLUMN_MAP_HIST_AK = {
-    "日期": "date",
-    "开盘": "open",
-    "收盘": "close",
-    "最高": "high",
-    "最低": "low",
-    "成交量": "volume",
-    "成交额": "amount",
-    "换手率": "turnover",
-}
-
-_FREQ_MAP = {
-    0: "5m",
-    1: "15m",
-    2: "30m",
-    3: "1h",
-    4: "day",
-    5: "week",
-    6: "mon",
-    7: "1m",
-    8: "1m",
-    9: "day",
-    10: "3mon",
-    11: "year",
-}
-
-# ---------- Tushare 工具函数 ---------- #
+def set_api(session) -> None:
+    """由外部(比如GUI)注入已创建好的 ts.pro_api() 会话"""
+    global pro
+    pro = session
+    
 
 def _to_ts_code(code: str) -> str:
-    return f"{code.zfill(6)}.SH" if code.startswith(("60", "68", "9")) else f"{code.zfill(6)}.SZ"
-
-
-def _get_kline_tushare(code: str, start: str, end: str, adjust: str) -> pd.DataFrame:
-    ts_code = _to_ts_code(code)
-    adj_flag = None if adjust == "" else adjust
-    for attempt in range(1, 4):
-        try:
-            df = ts.pro_bar(
-                ts_code=ts_code,
-                adj=adj_flag,
-                start_date=start,
-                end_date=end,
-                freq="D",
-            )
-            break
-        except Exception as e:
-            logger.warning("Tushare 拉取 %s 失败(%d/3): %s", code, attempt, e)
-            time.sleep(random.uniform(1, 2) * attempt)
+    """把6位code映射到标准 ts_code 后缀。"""
+    code = str(code).zfill(6)
+    if code.startswith(("60", "68", "9")):
+        return f"{code}.SH"
+    elif code.startswith(("4", "8")):
+        return f"{code}.BJ"
     else:
-        return pd.DataFrame()
+        return f"{code}.SZ"
+
+def _get_kline_tushare(code: str, start: str, end: str) -> pd.DataFrame:
+    ts_code = _to_ts_code(code)
+    try:
+        df = ts.pro_bar(
+            ts_code=ts_code,
+            adj="qfq",
+            start_date=start,
+            end_date=end,
+            freq="D",
+            api=pro
+        )
+    except Exception as e:
+        if _looks_like_ip_ban(e):
+            raise RateLimitError(str(e)) from e
+        raise
 
     if df is None or df.empty:
         return pd.DataFrame()
 
     df = df.rename(columns={"trade_date": "date", "vol": "volume"})[
-        ["date", "open", "close", "high", "low", "volume","amount","pct_chg"]
+        ["date", "open", "close", "high", "low", "volume"]
     ].copy()
-    df.reset_index(drop=True).set_index("date")
     df["date"] = pd.to_datetime(df["date"])
-    df[[c for c in df.columns if c != "date"]] = df[[c for c in df.columns if c != "date"]].apply(
-        pd.to_numeric, errors="coerce"
-    )
-    return df.sort_values("date")
-
-# ---------- AKShare 工具函数 ---------- #
-
-def _get_kline_akshare(code: str, start: str, end: str, adjust: str) -> pd.DataFrame:
-    for attempt in range(1, 4):
-        try:
-            df = ak.stock_zh_a_hist(
-                symbol=code,
-                period="daily",
-                start_date=start,
-                end_date=end,
-                adjust=adjust,
-            )
-            break
-        except Exception as e:
-            logger.warning("AKShare 拉取 %s 失败(%d/3): %s", code, attempt, e)
-            time.sleep(random.uniform(1, 2) * attempt)
-    else:
-        return pd.DataFrame()
-
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    df = (
-        df[list(COLUMN_MAP_HIST_AK)]
-        .rename(columns=COLUMN_MAP_HIST_AK)
-        .assign(date=lambda x: pd.to_datetime(x["date"]))
-    )
-    df[[c for c in df.columns if c != "date"]] = df[[c for c in df.columns if c != "date"]].apply(
-        pd.to_numeric, errors="coerce"
-    )
-    df = df[["date", "open", "close", "high", "low", "volume"]]
+    for c in ["open", "close", "high", "low", "volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
     return df.sort_values("date").reset_index(drop=True)
 
-# ---------- Mootdx 工具函数 ---------- #
-
-def _get_kline_mootdx(code: str, start: str, end: str, adjust: str, freq_code: int) -> pd.DataFrame:    
-    symbol = code.zfill(6)
-    freq = _FREQ_MAP.get(freq_code, "day")
-    client = Quotes.factory(market="std")
-    try:
-        df = client.bars(symbol=symbol, frequency=freq, adjust=adjust or None)
-    except Exception as e:
-        logger.warning("Mootdx 拉取 %s 失败: %s", code, e)
-        return pd.DataFrame()
-    if df is None or df.empty:
-        return pd.DataFrame()
-    
-    df = df.rename(
-        columns={"datetime": "date", "open": "open", "high": "high", "low": "low", "close": "close", "vol": "volume"}
-    )
-    df["date"] = pd.to_datetime(df["date"]).dt.normalize()
-    start_ts = pd.to_datetime(start, format="%Y%m%d")
-    end_ts = pd.to_datetime(end, format="%Y%m%d")
-    df = df[(df["date"].dt.date >= start_ts.date()) & (df["date"].dt.date <= end_ts.date())].copy()    
-    df = df.sort_values("date").reset_index(drop=True)    
-    return df[["date", "open", "close", "high", "low", "volume"]]
-
-# ---------- 通用接口 ---------- #
-
-def get_kline(
-    code: str,
-    start: str,
-    end: str,
-    adjust: str,
-    datasource: str,
-    freq_code: int = 4,
-) -> pd.DataFrame:
-    if datasource == "tushare":
-        return _get_kline_tushare(code, start, end, adjust)
-    elif datasource == "akshare":
-        return _get_kline_akshare(code, start, end, adjust)
-    elif datasource == "mootdx":        
-        return _get_kline_mootdx(code, start, end, adjust, freq_code)
-    else:
-        raise ValueError("datasource 仅支持 'tushare', 'akshare' 或 'mootdx'")
-
-# ---------- 数据校验 ---------- #
-
 def validate(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
     df = df.drop_duplicates(subset="date").sort_values("date").reset_index(drop=True)
     if df["date"].isna().any():
         raise ValueError("存在缺失日期！")
@@ -232,141 +109,116 @@ def validate(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("数据包含未来日期，可能抓取错误！")
     return df
 
-def drop_dup_columns(df: pd.DataFrame) -> pd.DataFrame:
-    return df.loc[:, ~df.columns.duplicated()]
-# ---------- 单只股票抓取 ---------- #
+# --------------------------- 读取 stocklist.csv & 过滤板块 --------------------------- #
+
+def _filter_by_boards_stocklist(df: pd.DataFrame, exclude_boards: set[str]) -> pd.DataFrame:
+    """
+    exclude_boards 子集：{'gem','star','bj'}
+    - star : 科创板 688（.SH）
+    - bj   : 北交所（.BJ 或 4/8 开头）
+    """
+    code = df["symbol"].astype(str)
+    ts_code = df["ts_code"].astype(str).str.upper()
+    mask = pd.Series(True, index=df.index)
+
+    if "gem" in exclude_boards:
+        mask &= ~code.str.startswith(("300", "301"))
+    if "star" in exclude_boards:
+        mask &= ~code.str.startswith(("688",))
+    if "bj" in exclude_boards:
+        mask &= ~(ts_code.str.endswith(".BJ") | code.str.startswith(("4", "8")))
+
+    return df[mask].copy()
+
+def load_codes_from_stocklist(stocklist_csv: Path, exclude_boards: set[str]) -> List[str]:
+    df = pd.read_csv(stocklist_csv)    
+    df = _filter_by_boards_stocklist(df, exclude_boards)
+    codes = df["symbol"].astype(str).str.zfill(6).tolist()
+    codes = list(dict.fromkeys(codes))  # 去重保持顺序
+    logger.info("从 %s 读取到 %d 只股票（排除板块：%s）",
+                stocklist_csv, len(codes), ",".join(sorted(exclude_boards)) or "无")
+    return codes
+
+# --------------------------- 单只抓取（全量覆盖保存） --------------------------- #
 def fetch_one(
     code: str,
     start: str,
     end: str,
     out_dir: Path,
-    incremental: bool,
-    datasource: str,
-    freq_code: int,
-):    
+):
     csv_path = out_dir / f"{code}.csv"
 
-    # 增量更新：若本地已有数据则从最后一天开始
-    if incremental and csv_path.exists():
-        try:
-            existing = pd.read_csv(csv_path, parse_dates=["date"])
-            last_date = existing["date"].max()
-            if last_date.date() > pd.to_datetime(end, format="%Y%m%d").date():
-                logger.debug("%s 已是最新，无需更新", code)
-                return
-            start = last_date.strftime("%Y%m%d")
-        except Exception:
-            logger.exception("读取 %s 失败，将重新下载", csv_path)
-
     for attempt in range(1, 4):
-        try:            
-            new_df = get_kline(code, start, end, "qfq", datasource, freq_code)
+        try:
+            new_df = _get_kline_tushare(code, start, end)
             if new_df.empty:
-                logger.debug("%s 无新数据", code)
-                break
+                logger.debug("%s 无数据，生成空表。", code)
+                new_df = pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
             new_df = validate(new_df)
-            if csv_path.exists() and incremental:
-                old_df = pd.read_csv(
-                    csv_path,
-                    parse_dates=["date"],
-                    index_col=False
-                )
-                old_df = drop_dup_columns(old_df)
-                new_df = drop_dup_columns(new_df)
-                new_df = (
-                    pd.concat([old_df, new_df], ignore_index=True)
-                    .drop_duplicates(subset="date")
-                    .sort_values("date")
-                )
-            new_df.to_csv(csv_path, index=False)
+            new_df.to_csv(csv_path, index=False)  # 直接覆盖保存
             break
-        except Exception:
-            logger.exception("%s 第 %d 次抓取失败", code, attempt)
-            time.sleep(random.uniform(1, 3) * attempt)  # 指数退避
+        except Exception as e:
+            if _looks_like_ip_ban(e):
+                logger.error(f"{code} 第 {attempt} 次抓取疑似被封禁，沉睡 {COOLDOWN_SECS} 秒")
+                _cool_sleep(COOLDOWN_SECS)
+            else:
+                silent_seconds = 15 * attempt
+                logger.info(f"{code} 第 {attempt} 次抓取失败，{silent_seconds} 秒后重试：{e}")
+                time.sleep(silent_seconds)
     else:
         logger.error("%s 三次抓取均失败，已跳过！", code)
 
-def check_date_continuity(df: pd.DataFrame, start_date: str, end_date: str):
-    """
-    检查数据集中是否存在缺失的交易日（与全市场交易日历对比）。
-    注意：这里我们生成一个简化的连续日期范围作为示例，
-    一个更严谨的方法是获取真实的A股交易日历。
-    """
-    # 获取数据中所有唯一的日期
-    data_dates = df.index.get_level_values('date').unique()
-
-    # 生成一个从开始到结束的完整日期范围
-    # freq='B' 表示只包含工作日 (Business day)
-    full_calendar = pd.date_range(start=start_date, end=end_date, freq='B')
-
-    # 找出在完整日历中但不在我们数据中的日期
-    missing_dates = full_calendar.difference(data_dates)
-
-    if not missing_dates.empty:
-        print(f"Warning: Found {len(missing_dates)} potentially missing trading dates.")
-        print("First 10 missing dates:", missing_dates[:10].strftime('%Y-%m-%d').tolist())
-    else:
-        print("Data continuity check passed. No obvious missing business days found.")
-
-# --- 使用示例 ---
-# check_date_continuity(clean_kline_data, '2023-01-01', '2023-06-30')
-
-# ---------- 主入口 ---------- #
-
+# --------------------------- 主入口 --------------------------- #
 def main():
-    parser = argparse.ArgumentParser(description="按市值筛选 A 股并抓取历史 K 线")
-    parser.add_argument("--datasource", choices=["tushare", "akshare", "mootdx"], default="tushare", help="历史 K 线数据源")
-    parser.add_argument("--frequency", type=int, choices=list(_FREQ_MAP.keys()), default=4, help="K线频率编码，参见说明")
-    parser.add_argument("--exclude-gem", default=True, help="True则排除创业板/科创板/北交所")
-    parser.add_argument("--min-mktcap", type=float, default=5e9, help="最小总市值（含），单位：元")
-    parser.add_argument("--max-mktcap", type=float, default=float("+inf"), help="最大总市值（含），单位：元，默认无限制")
+    parser = argparse.ArgumentParser(description="从 stocklist.csv 读取股票池并用 Tushare 抓取日线K线（固定qfq，全量覆盖）")
+    # 抓取范围
     parser.add_argument("--start", default="20190101", help="起始日期 YYYYMMDD 或 'today'")
     parser.add_argument("--end", default="today", help="结束日期 YYYYMMDD 或 'today'")
+    # 股票清单与板块过滤
+    parser.add_argument("--stocklist", type=Path, default=Path("./stocklist.csv"), help="股票清单CSV路径（需含 ts_code 或 symbol）")
+    parser.add_argument(
+        "--exclude-boards",
+        nargs="*",
+        default=[],
+        choices=["gem", "star", "bj"],
+        help="排除板块，可多选：gem(创业板300/301) star(科创板688) bj(北交所.BJ/4/8)"
+    )
+    # 其它
     parser.add_argument("--out", default="./data", help="输出目录")
-    parser.add_argument("--workers", type=int, default=3, help="并发线程数")
+    parser.add_argument("--workers", type=int, default=6, help="并发线程数")
     args = parser.parse_args()
 
-    # ---------- Token 处理 ---------- #
-    if args.datasource == "tushare":
-        ts_token = "36383c6938c5d0654dbb4746347337f1bd343861188b207d3ad77208"  # 在这里补充token
-        ts.set_token(ts_token)
-        global pro
-        pro = ts.pro_api()
+    # ---------- Tushare Token ---------- #
+    os.environ["NO_PROXY"] = "api.waditu.com,.waditu.com,waditu.com"
+    os.environ["no_proxy"] = os.environ["NO_PROXY"]
+    ts_token = os.environ.get("TUSHARE_TOKEN")
+    if not ts_token:
+        raise ValueError("请先设置环境变量 TUSHARE_TOKEN，例如：export TUSHARE_TOKEN=你的token")
+    ts.set_token(ts_token)
+    global pro
+    pro = ts.pro_api()
 
     # ---------- 日期解析 ---------- #
-    start = dt.date.today().strftime("%Y%m%d") if args.start.lower() == "today" else args.start
-    end = dt.date.today().strftime("%Y%m%d") if args.end.lower() == "today" else args.end
+    start = dt.date.today().strftime("%Y%m%d") if str(args.start).lower() == "today" else args.start
+    end = dt.date.today().strftime("%Y%m%d") if str(args.end).lower() == "today" else args.end
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ---------- 市值快照 & 股票池 ---------- #
-    mktcap_df = _get_mktcap_ak()    
-
-    codes_from_filter = get_constituents(
-        args.min_mktcap,
-        args.max_mktcap,
-        args.exclude_gem,
-        mktcap_df=mktcap_df,
-    )    
-    # 加上本地已有的股票，确保旧数据也能更新
-    local_codes = [p.stem for p in out_dir.glob("*.csv")]
-    codes = sorted(set(codes_from_filter) | set(local_codes))
+    # ---------- 从 stocklist.csv 读取股票池 ---------- #
+    exclude_boards = set(args.exclude_boards or [])
+    codes = load_codes_from_stocklist(args.stocklist, exclude_boards)
 
     if not codes:
-        logger.error("筛选结果为空，请调整参数！")
+        logger.error("stocklist 为空或被过滤后无代码，请检查。")
         sys.exit(1)
 
     logger.info(
-        "开始抓取 %d 支股票 | 数据源:%s | 频率:%s | 日期:%s → %s",
-        len(codes),
-        args.datasource,
-        _FREQ_MAP[args.frequency],
-        start,
-        end,
+        "开始抓取 %d 支股票 | 数据源:Tushare(日线,qfq) | 日期:%s → %s | 排除:%s",
+        len(codes), start, end, ",".join(sorted(exclude_boards)) or "无",
     )
 
-    # ---------- 多线程抓取 ---------- #
+    # ---------- 多线程抓取（全量覆盖） ---------- #
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = [
             executor.submit(
@@ -375,9 +227,6 @@ def main():
                 start,
                 end,
                 out_dir,
-                True,
-                args.datasource,
-                args.frequency,
             )
             for code in codes
         ]
@@ -385,7 +234,6 @@ def main():
             pass
 
     logger.info("全部任务完成，数据已保存至 %s", out_dir.resolve())
-
 
 if __name__ == "__main__":
     main()

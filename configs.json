@@ -5,51 +5,83 @@
       "alias": "少妇战法",
       "activate": true,
       "params": {
-        "j_threshold": 1,
+        "j_threshold": 15,
         "bbi_min_window": 20,
-        "max_window": 60,
-        "price_range_pct": 0.5,
-        "bbi_q_threshold": 0.1,
+        "max_window": 120,
+        "price_range_pct": 1,
+        "bbi_q_threshold": 0.2,
         "j_q_threshold": 0.10
+      }
+    },
+    {
+      "class": "SuperB1Selector",
+      "alias": "SuperB1战法",
+      "activate": true,
+      "params": {
+        "lookback_n": 10,
+        "close_vol_pct": 0.02,
+        "price_drop_pct": 0.02,
+        "j_threshold": 10,
+        "j_q_threshold": 0.10,
+        "B1_params": { 
+          "j_threshold": 15,
+          "bbi_min_window": 20,
+          "max_window": 120,
+          "price_range_pct": 1,
+          "bbi_q_threshold": 0.3,
+          "j_q_threshold": 0.10
+        }
       }
     },
     {
       "class": "BBIShortLongSelector",
       "alias": "补票战法",
-      "activate": false,
+      "activate": true,
       "params": {
-        "n_short": 3,
+        "n_short": 5,
         "n_long": 21,
-        "m": 3,
+        "m": 5,
         "bbi_min_window": 2,
-        "max_window": 60,
-        "bbi_q_threshold": 0.2
+        "max_window": 120,
+        "bbi_q_threshold": 0.2,
+        "upper_rsv_threshold": 75,
+        "lower_rsv_threshold":25
       }
-    },
-    {
-      "class": "BreakoutVolumeKDJSelector",
-      "alias": "TePu战法",
-      "activate": false,
-      "params": {
-        "j_threshold": 1,
-        "j_q_threshold": 0.10,
-        "up_threshold": 3.0,
-        "volume_threshold": 0.6667,
-        "offset": 15,
-        "max_window": 60,
-        "price_range_pct": 0.5
-      }
-    },
+    }, 
     {
       "class": "PeakKDJSelector",        
       "alias": "填坑战法",
       "activate": true,                 
       "params": {
         "j_threshold": 10,                 
-        "max_window": 150,
+        "max_window": 120,                
         "fluc_threshold": 0.03,
         "j_q_threshold": 0.10,
         "gap_threshold": 0.2
+      }
+    },
+    {
+      "class": "MA60CrossVolumeWaveSelector",
+      "alias": "上穿60放量战法",
+      "activate": true,
+      "params": {
+        "lookback_n": 25,
+        "vol_multiple": 1.8,
+        "j_threshold": 15,
+        "j_q_threshold": 0.10,
+        "ma60_slope_days": 5,
+        "max_window": 120        
+      }
+    },
+    {
+      "class": "CustomJZXSelector",
+      "alias": "J值知行战法",
+      "activate": true,
+      "params": {
+        "j_threshold": 13,
+        "amp_threshold": 0.04,
+        "pct_min": -0.02,
+        "pct_max": 0.018
       }
     }
   ]
