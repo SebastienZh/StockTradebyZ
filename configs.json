@@ -83,6 +83,32 @@
         "pct_min": -0.02,
         "pct_max": 0.018
       }
+    },
+    {
+      "class": "B2Selector",
+      "alias": "B2战法",
+      "activate": true,
+      "params": {
+        "j_last_threshold": 0,
+        "pct_chg_threshold": 0.0395,
+        "j_today_max": 55
+      }
+    },
+    {
+      "class": "VolumeReboundSelector",
+      "alias": "放量反弹战法",
+      "activate": true,
+      "params": {
+        "j_last_threshold": 20.0,
+        "j_today_max": 55.0,
+        "pct_chg_threshold": 0.038
+      }
+    },
+    {
+      "class": "BrickChartSelector",
+      "alias": "砖型图战法",
+      "activate": true,
+      "params": {}
     }
   ]
 }

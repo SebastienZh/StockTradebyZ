@@ -922,3 +922,245 @@ class CustomJZXSelector:
             if self._passes_filters(hist):
                 picks.append(code)
         return picks
+
+class B2Selector:
+    """
+    B2 战法选股器
+    公式逻辑:
+    1. COND1: 昨日 J < 0 (j_last_threshold)
+    2. COND2: 今日涨幅 > 3.95% (pct_chg_threshold)
+    3. COND3: 今日成交量 > 昨日成交量 (放量)
+    4. COND4: 今日 J < 55 (j_today_max)
+    """
+
+    def __init__(
+        self,
+        j_last_threshold: float = 0.0,
+        pct_chg_threshold: float = 0.0395,
+        j_today_max: float = 55.0,
+    ) -> None:
+        self.j_last_threshold = j_last_threshold
+        self.pct_chg_threshold = pct_chg_threshold
+        self.j_today_max = j_today_max
+
+    def _passes_filters(self, hist: pd.DataFrame) -> bool:
+        if len(hist) < 2:
+            return False
+
+        # 注意：这里我们故意 不调用 passes_day_constraints_today()
+        # 因为那个通用函数默认限制当日涨跌幅 < 2%，而本战法要求涨幅 > 3.95% 会被互斥掉。
+
+        # 1. 计算 KDJ 指标 (使用已有通用函数，默认 N=9, M1=3, M2=3)
+        kdj = compute_kdj(hist)
+
+        # 提取昨日和今日的 J 值
+        j_last = float(kdj.iloc[-2]["J"])
+        j_today = float(kdj.iloc[-1]["J"])
+
+        # COND1: 昨日 J < 0 且 COND4: 今日 J < 55
+        if not (j_last < self.j_last_threshold):
+            return False
+        if not (j_today < self.j_today_max):
+            return False
+
+        # 2. 提取昨日和今日的收盘价、成交量
+        c_last = float(hist.iloc[-2]["close"])
+        c_today = float(hist.iloc[-1]["close"])
+        v_last = float(hist.iloc[-2]["volume"])
+        v_today = float(hist.iloc[-1]["volume"])
+
+        if c_last <= 0:
+            return False
+
+        # COND2: 今日涨跌幅 > 3.95%
+        # (CLOSE / REF(CLOSE,1) - 1)
+        pct_chg = (c_today / c_last) - 1.0
+        if pct_chg <= self.pct_chg_threshold:
+            return False
+
+        # COND3: 放量 (今日成交量 > 昨日成交量)
+        if not (v_today > v_last):
+            return False
+
+        # 全部条件满足
+        return True
+
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
+        picks: List[str] = []
+        # KDJ(9,3,3) 需要一定数据长度预热才能准确，预留 40 根 K 线足以
+        need_len = 40
+        for code, df in data.items():
+            hist = df[df["date"] <= date]
+            if hist.empty or len(hist) < need_len:
+                continue
+
+            hist = hist.tail(need_len)
+            if self._passes_filters(hist):
+                picks.append(code)
+
+        return picks
+
+class VolumeReboundSelector:
+    """
+    放量反弹战法选股器
+    公式逻辑:
+    条件1: 昨日 J < 20 (j_last_threshold)
+    条件2: 今日 J < 55 (j_today_max)
+    条件3: 今日涨幅 > 3.8% (pct_chg_threshold)
+    条件4: 今日成交量 > 昨日成交量 (放量)
+    """
+
+    def __init__(
+        self,
+        j_last_threshold: float = 20.0,
+        j_today_max: float = 55.0,
+        pct_chg_threshold: float = 0.038,
+    ) -> None:
+        self.j_last_threshold = j_last_threshold
+        self.j_today_max = j_today_max
+        self.pct_chg_threshold = pct_chg_threshold
+
+    def _passes_filters(self, hist: pd.DataFrame) -> bool:
+        if len(hist) < 2:
+            return False
+
+        # 不调用系统的 passes_day_constraints_today() 因为它会阻挡当天的大阳线
+
+        # 1. 计算 KDJ 指标
+        kdj = compute_kdj(hist)
+
+        # 提取昨日和今日的 J 值
+        j_last = float(kdj.iloc[-2]["J"])
+        j_today = float(kdj.iloc[-1]["J"])
+
+        # 条件1: 昨日 J < 20 且 条件2: 今日 J < 55
+        if not (j_last < self.j_last_threshold):
+            return False
+        if not (j_today < self.j_today_max):
+            return False
+
+        # 2. 提取昨日和今日的收盘价、成交量
+        c_last = float(hist.iloc[-2]["close"])
+        c_today = float(hist.iloc[-1]["close"])
+        v_last = float(hist.iloc[-2]["volume"])
+        v_today = float(hist.iloc[-1]["volume"])
+
+        if c_last <= 0:
+            return False
+
+        # 条件3: 今日涨跌幅 > 3.8%
+        pct_chg = (c_today / c_last) - 1.0
+        if pct_chg <= self.pct_chg_threshold:
+            return False
+
+        # 条件4: 放量 (今日成交量 > 昨日成交量)
+        if not (v_today > v_last):
+            return False
+
+        # 全条件满足，选出
+        return True
+
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
+        picks: List[str] = []
+        # 计算 KDJ 所需的历史窗口，预留 40 根 K 线
+        need_len = 40
+        for code, df in data.items():
+            hist = df[df["date"] <= date]
+            if hist.empty or len(hist) < need_len:
+                continue
+
+            hist = hist.tail(need_len)
+            if self._passes_filters(hist):
+                picks.append(code)
+
+        return picks
+
+class BrickChartSelector:
+    """
+    砖型图战法选股器
+    核心逻辑：
+    利用短线 4 日和 6 日的动量均线，计算资金强度的“砖型图”。
+    寻找刚开始由弱转强的拐点买入（相当于“绿转红”或者“红柱刚变长”的第一天）。
+    对应公式的 XG := CC>0; (昨天未上升，今天上升)
+    """
+
+    def __init__(self) -> None:
+        # 该策略公式中的周期参数(4, 6)均为极短线硬性指标，因此无需向外暴露配置参数
+        pass
+
+    def _passes_filters(self, hist: pd.DataFrame) -> bool:
+        if len(hist) < 5:
+            return False
+
+        # --- 辅助函数：精准模拟通达信/同花顺算法的 SMA(X, N, M) ---
+        # 通达信的 SMA 平滑实际上是以 M/N 为权重的指数移动平均线 (EMA)
+        def tdx_sma(series: pd.Series, n: int, m: int = 1) -> pd.Series:
+            return series.ewm(alpha=m/n, adjust=False).mean()
+
+        high = hist["high"]
+        low = hist["low"]
+        close = hist["close"]
+
+        # 预先计算 4日内的最高和最低
+        hhv4 = high.rolling(window=4, min_periods=1).max()
+        llv4 = low.rolling(window=4, min_periods=1).min()
+
+        # 加一个极小值避免分母为 0
+        range4 = hhv4 - llv4 + 1e-9
+
+        # VAR1A := (HHV(HIGH,4)-CLOSE)/(HHV(HIGH,4)-LLV(LOW,4))*100-90;
+        var1a = (hhv4 - close) / range4 * 100.0 - 90.0
+        # VAR2A := SMA(VAR1A,4,1)+100;
+        var2a = tdx_sma(var1a, 4, 1) + 100.0
+
+        # VAR3A := (CLOSE-LLV(LOW,4))/(HHV(HIGH,4)-LLV(LOW,4))*100;
+        var3a = (close - llv4) / range4 * 100.0
+        # VAR4A := SMA(VAR3A,6,1);
+        var4a = tdx_sma(var3a, 6, 1)
+        # VAR5A := SMA(VAR4A,6,1)+100;
+        var5a = tdx_sma(var4a, 6, 1) + 100.0
+
+        # VAR6A := VAR5A-VAR2A;
+        var6a = var5a - var2a
+
+        # 砖型图 := IF(VAR6A>4, VAR6A-4, 0)
+        # 对应 Python 就是把小于 0 的数字截断为 0
+        brick = (var6a - 4.0).clip(lower=0)
+
+        # 判断最后的触发信号：
+        # 我们只需要最近三天 (T-2, T-1, T) 的砖型图数值即可完成 REF 判断
+        b_t = float(brick.iloc[-1])       # 今日砖型图
+        b_prev = float(brick.iloc[-2])    # 昨日砖型图
+        b_prev2 = float(brick.iloc[-3])   # 前日砖型图
+
+        # AA := (REF(砖型图,1) < 砖型图)
+        aa_today = b_t > b_prev
+
+        # REF(AA, 1) 就是看昨天是不是比前天大
+        aa_yest = b_prev > b_prev2
+
+        # CC := (REF(AA,1)=0) && (AA=1) => 昨天不仅没变大(可能是变小或持平)，但今天变大了
+        if (not aa_yest) and aa_today:
+            return True
+
+        return False
+
+    def select(self, date: pd.Timestamp, data: Dict[str, pd.DataFrame]) -> List[str]:
+        picks: List[str] = []
+        # SMA(SMA(...)) 具有历史依赖性，安全起见预留 60 天数据来做预热(warm-up)使均线完全收敛
+        need_len = 60
+        for code, df in data.items():
+            hist = df[df["date"] <= date]
+            if hist.empty or len(hist) < 5:
+                continue
+
+            hist = hist.tail(need_len)
+
+            # 由于依赖 tdx_sma 均线的收敛，太短的数据(如刚上市新股)会导致漂移误差，跳过安全
+            if len(hist) < need_len:
+                continue
+
+            if self._passes_filters(hist):
+                picks.append(code)
+
+        return picks
