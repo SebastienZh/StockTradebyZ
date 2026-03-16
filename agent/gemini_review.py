@@ -25,9 +25,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 import yaml
+
+load_dotenv()
 
 from base_reviewer import BaseReviewer
 

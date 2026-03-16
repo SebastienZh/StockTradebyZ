@@ -64,14 +64,20 @@ pip install -r requirements.txt
 
 ### 3.3 设置环境变量
 
-Windows PowerShell（永久写入）：
+在项目根目录复制模板文件，填入你的真实 Key：
 
-~~~powershell
-[Environment]::SetEnvironmentVariable("TUSHARE_TOKEN", "你的TushareToken", "User")
-[Environment]::SetEnvironmentVariable("GEMINI_API_KEY", "你的GeminiApiKey", "User")
+~~~bash
+cp .env.example .env
 ~~~
 
-写入后请重开终端，环境变量才会在新会话中生效。
+编辑 `.env`：
+
+~~~
+TUSHARE_TOKEN=你的TushareToken
+GEMINI_API_KEY=你的GeminiApiKey
+~~~
+
+项目启动时会自动加载 `.env`，无需手动设置系统环境变量，跨平台通用。`.env` 已在 `.gitignore` 中，不会被提交到版本库。
 
 ### 3.4 运行一键脚本
 

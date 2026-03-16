@@ -1,8 +1,11 @@
 numba==0.64.0
+python-dotenv>=1.0
 numpy==2.4.3
-pandas==3.0.1
+# streamlit 1.55.0 要求 pandas < 3；项目代码已对 tushare 做了 pandas 2.2+ 兼容补丁
+pandas>=2.2,<3
 plotly==6.5.0
-protobuf==7.34.0
+# streamlit 1.55.0 要求 protobuf < 7
+protobuf>=3.20,<7
 PyYAML==6.0.3
 streamlit==1.55.0
 tqdm==4.67.3

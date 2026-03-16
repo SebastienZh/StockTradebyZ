@@ -14,7 +14,10 @@ import os
 import pandas as pd
 import tushare as ts
 import yaml
+from dotenv import load_dotenv
 from tqdm import tqdm
+
+load_dotenv()
 
 warnings.filterwarnings("ignore")
 
