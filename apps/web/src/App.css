@@ -1860,6 +1860,95 @@ html[data-theme="dark"] .runtime-console-panel {
   font-weight: 720;
 }
 
+.failure-diagnostic-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--danger-line);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgb(236 88 105 / 0.14), transparent 70%),
+    var(--danger-soft);
+  padding: 14px;
+}
+
+.failure-diagnostic-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--danger);
+}
+
+.failure-diagnostic-heading h3,
+.failure-diagnostic-heading p,
+.failure-diagnostic-actions h4 {
+  margin: 0;
+}
+
+.failure-diagnostic-heading h3 {
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 760;
+}
+
+.failure-diagnostic-heading p,
+.failure-diagnostic-copy,
+.failure-diagnostic-docs {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.failure-diagnostic-copy {
+  margin: 0;
+}
+
+.failure-diagnostic-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.failure-diagnostic-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.failure-diagnostic-actions h4 {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.failure-diagnostic-actions ol {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-strong);
+}
+
+.failure-diagnostic-actions li {
+  padding-left: 4px;
+  line-height: 1.5;
+}
+
+.failure-diagnostic-docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.failure-diagnostic-docs code {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.38);
+  color: var(--text-strong);
+  padding: 4px 6px;
+  overflow-wrap: anywhere;
+}
+
+html[data-theme="dark"] .failure-diagnostic-docs code {
+  background: rgb(255 255 255 / 0.06);
+}
+
 .runtime-console-lines {
   display: grid;
   gap: 7px;

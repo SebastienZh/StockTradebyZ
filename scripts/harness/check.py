@@ -53,6 +53,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-runtime-terminal-integrity.md"),
     Path("docs/agent-harness/r7-resource-envelope.md"),
     Path("docs/agent-harness/r7-runtime-recovery.md"),
+    Path("docs/agent-harness/post-r7-product-hardening.md"),
     Path("docs/agent-harness/workflows.md"),
     Path("docs/agent-harness/quality-scorecard.md"),
 ]
@@ -183,6 +184,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-runtime-terminal-integrity",
             "scripts/harness/check.sh r7-resource-envelope",
             "scripts/harness/check.sh r7-runtime-recovery",
+            "scripts/harness/check.sh post-r7-product-hardening",
             "Maintenance Rule",
         ],
     )
@@ -399,6 +401,7 @@ def python_files() -> list[str]:
         "scripts/harness/check.py",
         "scripts/harness/resource_envelope.py",
         "scripts/harness/seed_ui_smoke.py",
+        "scripts/harness/tushare_e2e_acceptance.py",
         "scripts/harness/ui_smoke_app.py",
     ]
     for root in roots:
@@ -993,6 +996,57 @@ def check_r7_runtime_recovery() -> None:
     print("[r7-runtime-recovery] ok")
 
 
+def check_post_r7_product_hardening() -> None:
+    assert_contains(
+        "docs/agent-harness/post-r7-product-hardening.md",
+        [
+            "Managing issue: #72",
+            "Parent epic: #23",
+            "Tushare Live Acceptance",
+            "scripts/harness/tushare_e2e_acceptance.py",
+            "POST /api/runs/market-data",
+            "credential-free",
+            "运行失败诊断",
+            "market_data_missing_tushare_token",
+            "post-r7-tushare-live-acceptance-2026-06-15.md",
+            "Legacy Oracle/Rollback 删除计划",
+            "replacement proof",
+            "parity proof",
+            "rollback proof",
+            "destructive cleanup",
+            "`data/trading`",
+        ],
+    )
+    assert_contains(
+        "apps/api/stocktrade_api/services/diagnostics.py",
+        [
+            "build_failure_payload",
+            "format_failure_event",
+            "market_data_missing_tushare_token",
+            "market_data_tushare_rate_limited",
+            "market_data_network_failure",
+        ],
+    )
+    assert_contains(
+        "apps/web/src/features/app/AppShell.tsx",
+        [
+            "FailureDiagnosticPanel",
+            "failureDiagnosticFromRun",
+            "If a run was created, diagnostics are recorded in Runs.",
+        ],
+    )
+    assert_contains(
+        "docs/product-usage-manual.md",
+        [
+            "Tushare Live Acceptance",
+            "失败诊断",
+            "market_data_missing_tushare_token",
+            "var/acceptance/tushare-e2e",
+        ],
+    )
+    print("[post-r7-product-hardening] ok")
+
+
 def check_r7_product_launcher() -> None:
     assert_contains(
         "docs/agent-harness/r7-product-launcher.md",
@@ -1506,6 +1560,7 @@ def parse_args() -> argparse.Namespace:
             "r7-runtime-terminal-integrity",
             "r7-resource-envelope",
             "r7-runtime-recovery",
+            "post-r7-product-hardening",
             "quick",
         ],
         help="Validation gate to run",
@@ -1564,6 +1619,8 @@ def main() -> int:
             check_r7_resource_envelope()
         elif args.gate == "r7-runtime-recovery":
             check_r7_runtime_recovery()
+        elif args.gate == "post-r7-product-hardening":
+            check_post_r7_product_hardening()
         elif args.gate == "quick":
             check_quick()
         else:

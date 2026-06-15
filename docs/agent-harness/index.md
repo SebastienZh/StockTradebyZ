@@ -86,6 +86,9 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   memory, SQLite/DuckDB growth, and artifact-growth evidence for #152.
 - [r7-runtime-recovery.md](r7-runtime-recovery.md): FastAPI startup recovery
   and local product job concurrency semantics for #152.
+- [post-r7-product-hardening.md](post-r7-product-hardening.md): #72 Tushare
+  live acceptance, runtime failure diagnostics, and legacy oracle/rollback
+  destructive-cleanup plan.
 - [workflows.md](workflows.md): repeatable agent workflows.
 - [quality-scorecard.md](quality-scorecard.md): review scorecard for harness quality.
 
@@ -114,6 +117,7 @@ scripts/harness/check.sh r7-workbench-retirement
 scripts/harness/check.sh r7-runtime-terminal-integrity
 scripts/harness/check.sh r7-resource-envelope
 scripts/harness/check.sh r7-runtime-recovery
+scripts/harness/check.sh post-r7-product-hardening
 scripts/harness/check.sh docs
 scripts/harness/check.sh contracts
 scripts/harness/check.sh python

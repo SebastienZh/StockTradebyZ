@@ -4,6 +4,7 @@ from threading import RLock
 from typing import TYPE_CHECKING
 
 from ..services.cancellation import WorkflowCancellationRequested
+from ..services.diagnostics import build_failure_payload, format_failure_event
 from ..storage.run_repository import TERMINAL_STATUSES, RunRepository
 from ..storage.sqlite_models import CandidateBatch, Run
 
@@ -100,6 +101,12 @@ class JobRuntime:
             summary={"mode": mode, "message": "cancelled by user request"},
         )
 
+    def _mark_workflow_failed(self, run_id: str, step_id: int, *, mode: str, exc: BaseException) -> Run:
+        error = build_failure_payload(exc, mode=mode)
+        self.repository.transition_step(step_id, status="failed", error=error)
+        self.repository.append_event(run_id, step_id=step_id, level="error", message=format_failure_event(error))
+        return self.repository.transition_run(run_id, status="failed", summary=error)
+
     def run_preselect_job(
         self,
         parameters: "PreselectParameters",
@@ -158,10 +165,7 @@ class JobRuntime:
             self._mark_workflow_cancelled(run.id, step.id, mode="preselect")
             raise
         except Exception as exc:
-            error = {"type": type(exc).__name__, "message": str(exc)}
-            self.repository.transition_step(step.id, status="failed", error=error)
-            self.repository.append_event(run.id, step_id=step.id, level="error", message=error["message"])
-            self.repository.transition_run(run.id, status="failed", summary=error)
+            self._mark_workflow_failed(run.id, step.id, mode="preselect", exc=exc)
             raise
 
     def run_market_data_job(
@@ -216,10 +220,7 @@ class JobRuntime:
             self._mark_workflow_cancelled(run.id, step.id, mode="market_data")
             raise
         except Exception as exc:
-            error = {"type": type(exc).__name__, "message": str(exc)}
-            self.repository.transition_step(step.id, status="failed", error=error)
-            self.repository.append_event(run.id, step_id=step.id, level="error", message=error["message"])
-            self.repository.transition_run(run.id, status="failed", summary=error)
+            self._mark_workflow_failed(run.id, step.id, mode="market_data", exc=exc)
             raise
 
     def run_review_job(
@@ -272,10 +273,7 @@ class JobRuntime:
             self._mark_workflow_cancelled(run.id, step.id, mode="review")
             raise
         except Exception as exc:
-            error = {"type": type(exc).__name__, "message": str(exc)}
-            self.repository.transition_step(step.id, status="failed", error=error)
-            self.repository.append_event(run.id, step_id=step.id, level="error", message=error["message"])
-            self.repository.transition_run(run.id, status="failed", summary=error)
+            self._mark_workflow_failed(run.id, step.id, mode="review", exc=exc)
             raise
 
     def run_archive_job(
@@ -329,10 +327,7 @@ class JobRuntime:
             self._mark_workflow_cancelled(run.id, step.id, mode="archive")
             raise
         except Exception as exc:
-            error = {"type": type(exc).__name__, "message": str(exc)}
-            self.repository.transition_step(step.id, status="failed", error=error)
-            self.repository.append_event(run.id, step_id=step.id, level="error", message=error["message"])
-            self.repository.transition_run(run.id, status="failed", summary=error)
+            self._mark_workflow_failed(run.id, step.id, mode="archive", exc=exc)
             raise
 
     def run_chart_export_job(
@@ -385,8 +380,5 @@ class JobRuntime:
             self._mark_workflow_cancelled(run.id, step.id, mode="chart_export")
             raise
         except Exception as exc:
-            error = {"type": type(exc).__name__, "message": str(exc)}
-            self.repository.transition_step(step.id, status="failed", error=error)
-            self.repository.append_event(run.id, step_id=step.id, level="error", message=error["message"])
-            self.repository.transition_run(run.id, status="failed", summary=error)
+            self._mark_workflow_failed(run.id, step.id, mode="chart_export", exc=exc)
             raise

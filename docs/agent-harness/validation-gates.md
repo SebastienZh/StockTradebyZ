@@ -31,6 +31,7 @@ requires it.
 | r7-runtime-terminal-integrity | `scripts/harness/check.sh r7-runtime-terminal-integrity` | R7 run/step terminal-state immutability for product job diagnostics |
 | r7-resource-envelope | `scripts/harness/check.sh r7-resource-envelope` | R7 credential-free runtime, memory, storage-growth, and artifact-growth evidence |
 | r7-runtime-recovery | `scripts/harness/check.sh r7-runtime-recovery` | R7 FastAPI startup recovery and local product job concurrency semantics |
+| post-r7-product-hardening | `scripts/harness/check.sh post-r7-product-hardening` | #72 Tushare live acceptance, runtime failure diagnostics, and legacy cleanup planning |
 | quick | `scripts/harness/check.sh quick` | Default before final response |
 
 ## Docs Gate
@@ -201,6 +202,27 @@ scripts/harness/check.sh r7-browser-proof
 This gate does not automate browser control. The browser pass is recorded in
 the document and must be refreshed when UI layout, route behavior, artifact
 inspection, or smoke fixture state changes.
+
+## Post-R7 Product Hardening Gate
+
+Checks:
+
+- `docs/agent-harness/post-r7-product-hardening.md` names issue #72 and parent
+  epic #23;
+- Tushare live acceptance remains explicit and outside credential-free `quick`;
+- runtime failure diagnostics require structured run summary, step error, and
+  event evidence;
+- legacy oracle/rollback deletion remains a future destructive-cleanup sequence
+  with replacement, parity, and rollback proof.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh post-r7-product-hardening
+```
+
+Run this before PRs that change live Tushare acceptance, Run Center diagnostics,
+or the legacy oracle/rollback cleanup plan.
 
 ## R7 Gemini API Review Retirement Gate
 

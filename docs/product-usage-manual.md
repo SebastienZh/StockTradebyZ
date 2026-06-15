@@ -118,6 +118,43 @@ FastAPI 产品后端启动时会对文件型 SQLite 数据库执行
 抓取开始、抓取完成或失败信息。完整抓取日志仍以 artifact 的形式保存，避免把
 大量下载明细直接塞进页面。
 
+如果运行失败，Run Detail 会显示“失败诊断”面板。该面板来自后端写入的
+run summary 和 step error，包含诊断代码、原因解释、是否可重试、建议动作和
+相关文档。常见诊断包括：
+
+- `market_data_missing_tushare_token`: 启动后端的 shell 没有
+  `TUSHARE_TOKEN`，需要设置后重启 `./start_product`。
+- `market_data_config_not_found`: Fetch config path 指向的 YAML 不存在。
+- `market_data_invalid_request`: 日期、workers 或 stocklist 配置无效。
+- `market_data_tushare_rate_limited`: 疑似命中 Tushare 频率限制，需要降低
+  Workers 或等待冷却。
+- `market_data_network_failure`: Tushare 网络、代理或 DNS 访问失败。
+
+#### Tushare Live Acceptance
+
+真实 Tushare 端到端验收不属于默认 `quick`，因为它依赖本机 token、网络和
+Tushare 可用性。有 token 时，可以从仓库根目录运行：
+
+```bash
+PYTHONPATH=apps/api:src python3 scripts/harness/tushare_e2e_acceptance.py \
+  --start 20260601 \
+  --end today \
+  --workers 1
+```
+
+该脚本会通过产品 API `POST /api/runs/market-data` 创建 market-data run，
+使用临时 stocklist 下载少量样本，记录 config/log artifacts、事件尾部、CSV
+数量和本地最新日期。验收记录写入：
+
+```text
+var/acceptance/tushare-e2e/<timestamp>/acceptance.json
+var/acceptance/tushare-e2e/<timestamp>/summary.md
+```
+
+`var/` 已被 `.gitignore` 忽略。不要提交真实 CSV、token、provider 原始日志或
+任何包含凭证的本地产物。PR 里只记录脱敏摘要，例如 run id、状态、CSV 数量和
+本地最新日期。
+
 ### 6.2 初选
 
 在运行中心填写：

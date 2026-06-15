@@ -1910,12 +1910,27 @@ function RunsView() {
 
   const marketDataMutation = useMutation({
     mutationFn: () => createMarketDataRun(compactMarketDataRequest(marketDataForm)),
+    onMutate: () => Date.now(),
     onSuccess: (response) => {
       selectRun(response.run.id)
       queryClient.invalidateQueries({ queryKey: ['runs'] })
       queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
       queryClient.invalidateQueries({ queryKey: ['run-events', response.run.id] })
       queryClient.invalidateQueries({ queryKey: ['run-artifacts', response.run.id] })
+    },
+    onError: async (_error, _variables, startedAt) => {
+      const started = startedAt ?? Date.now()
+      const response = await queryClient.fetchQuery({ queryKey: ['runs'], queryFn: listRuns })
+      const latest = response.runs[0]
+      if (latest?.kind === 'market_data' && Date.parse(latest.created_at) >= started - 1_000) {
+        selectRun(latest.id)
+      }
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      if (latest) {
+        queryClient.invalidateQueries({ queryKey: ['run', latest.id] })
+        queryClient.invalidateQueries({ queryKey: ['run-events', latest.id] })
+        queryClient.invalidateQueries({ queryKey: ['run-artifacts', latest.id] })
+      }
     },
   })
 
@@ -2069,7 +2084,7 @@ function RunsView() {
           {marketDataMutation.isError ? (
             <div className="alert compact-alert" role="alert">
               <ShieldAlert size={18} aria-hidden="true" />
-              <span>{errorText(marketDataMutation.error)}</span>
+              <span>{errorText(marketDataMutation.error)}. {t('If a run was created, diagnostics are recorded in Runs.')}</span>
             </div>
           ) : null}
 
@@ -2204,6 +2219,7 @@ function RunDetailPanel({
 }) {
   const { t } = useUiPreferences()
   const canCancel = run.status === 'queued' || run.status === 'running'
+  const diagnostic = failureDiagnosticFromRun(run)
 
   return (
     <div className="detail-content">
@@ -2227,6 +2243,8 @@ function RunDetailPanel({
         <Metric label="Started" value={formatDateTime(run.started_at)} />
         <Metric label="Finished" value={formatDateTime(run.finished_at)} />
       </div>
+
+      {diagnostic ? <FailureDiagnosticPanel diagnostic={diagnostic} /> : null}
 
       <section className="runtime-console-panel" aria-label={t('Runtime console')}>
         <div className="runtime-console-heading">
@@ -2285,6 +2303,57 @@ function RunDetailPanel({
         ))}
       </section>
     </div>
+  )
+}
+
+type FailureDiagnostic = {
+  code?: string
+  title?: string
+  explanation?: string
+  next_actions?: string[]
+  retryable?: boolean
+  docs?: string[]
+}
+
+function FailureDiagnosticPanel({ diagnostic }: { diagnostic: FailureDiagnostic }) {
+  const { t } = useUiPreferences()
+  return (
+    <section className="failure-diagnostic-panel" aria-label={t('Failure diagnostics')}>
+      <div className="failure-diagnostic-heading">
+        <ShieldAlert size={18} aria-hidden="true" />
+        <div>
+          <h3>{t('Failure diagnostics')}</h3>
+          <p>{diagnostic.title || t('Run failed')}</p>
+        </div>
+      </div>
+      {diagnostic.explanation ? <p className="failure-diagnostic-copy">{diagnostic.explanation}</p> : null}
+      {diagnostic.code || diagnostic.retryable !== undefined ? (
+        <div className="failure-diagnostic-meta">
+          {diagnostic.code ? <DataPair label="Diagnostic code" value={diagnostic.code} /> : null}
+          {diagnostic.retryable !== undefined ? (
+            <DataPair label="Retryable" value={diagnostic.retryable ? t('Yes') : t('No')} />
+          ) : null}
+        </div>
+      ) : null}
+      {diagnostic.next_actions?.length ? (
+        <div className="failure-diagnostic-actions">
+          <h4>{t('Suggested actions')}</h4>
+          <ol>
+            {diagnostic.next_actions.map((action) => (
+              <li key={action}>{action}</li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+      {diagnostic.docs?.length ? (
+        <div className="failure-diagnostic-docs">
+          <span>{t('Related docs')}</span>
+          {diagnostic.docs.map((doc) => (
+            <code key={doc}>{doc}</code>
+          ))}
+        </div>
+      ) : null}
+    </section>
   )
 }
 
@@ -3496,6 +3565,32 @@ function jsonPreview(value: Record<string, unknown> | null) {
 function jsonInline(value: Record<string, unknown> | null) {
   if (!value || Object.keys(value).length === 0) return '{}'
   return `keys: ${Object.keys(value).join(', ')}`
+}
+
+function failureDiagnosticFromRun(
+  run: RunSummary & { steps?: { error: Record<string, unknown> | null }[] },
+): FailureDiagnostic | null {
+  const candidates = [run.summary, ...(run.steps ?? []).map((step) => step.error)]
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue
+    const diagnostic = candidate.diagnostic
+    if (!diagnostic || typeof diagnostic !== 'object' || Array.isArray(diagnostic)) continue
+    return normalizeFailureDiagnostic(diagnostic as Record<string, unknown>)
+  }
+  return null
+}
+
+function normalizeFailureDiagnostic(value: Record<string, unknown>): FailureDiagnostic {
+  return {
+    code: typeof value.code === 'string' ? value.code : undefined,
+    title: typeof value.title === 'string' ? value.title : undefined,
+    explanation: typeof value.explanation === 'string' ? value.explanation : undefined,
+    next_actions: Array.isArray(value.next_actions)
+      ? value.next_actions.filter((item): item is string => typeof item === 'string')
+      : undefined,
+    retryable: typeof value.retryable === 'boolean' ? value.retryable : undefined,
+    docs: Array.isArray(value.docs) ? value.docs.filter((item): item is string => typeof item === 'string') : undefined,
+  }
 }
 
 function errorText(error: unknown) {

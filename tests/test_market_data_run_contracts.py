@@ -20,7 +20,11 @@ sys.path.insert(0, str(ROOT / "src"))
 from stocktrade_api.dependencies import get_market_data_service  # noqa: E402
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.schemas.market_data import MarketDataRunRequest  # noqa: E402
-from stocktrade_api.services.market_data_runs import CreatedMarketDataDownload, MarketDataDownloadService  # noqa: E402
+from stocktrade_api.services.market_data_runs import (  # noqa: E402
+    CreatedMarketDataDownload,
+    MarketDataDownloadService,
+    MarketDataDownloadValidationError,
+)
 from stocktrade_api.storage.run_repository import RunRepository  # noqa: E402
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
 
@@ -86,6 +90,50 @@ class MarketDataRunApiTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(service.request.start, "2026-05-30")
             self.assertFalse(service.cancel_requested)
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_market_data_failure_records_actionable_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            db_path = tmp / "app.sqlite"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=None, artifact_root=tmp / "artifacts")
+
+            class MissingTokenMarketDataService:
+                def run(self, *, run_id: str, request: MarketDataRunRequest, should_cancel=None) -> CreatedMarketDataDownload:
+                    raise MarketDataDownloadValidationError("请先设置环境变量 TUSHARE_TOKEN")
+
+            app.dependency_overrides[get_market_data_service] = lambda: MissingTokenMarketDataService()
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = await client.post("/api/runs/market-data", json={})
+                self.assertEqual(created.status_code, 400)
+                self.assertIn("TUSHARE_TOKEN", created.json()["detail"])
+
+                listed = await client.get("/api/runs")
+                self.assertEqual(listed.status_code, 200)
+                failed_run = listed.json()["runs"][0]
+                self.assertEqual(failed_run["kind"], "market_data")
+                self.assertEqual(failed_run["status"], "failed")
+
+                detail = await client.get(f"/api/runs/{failed_run['id']}")
+                self.assertEqual(detail.status_code, 200)
+                detail_payload = detail.json()
+                diagnostic = detail_payload["summary"]["diagnostic"]
+                self.assertEqual(diagnostic["code"], "market_data_missing_tushare_token")
+                self.assertTrue(diagnostic["retryable"])
+                self.assertIn("重新启动 ./start_product", diagnostic["next_actions"][1])
+                self.assertEqual(
+                    detail_payload["steps"][0]["error"]["diagnostic"]["code"],
+                    "market_data_missing_tushare_token",
+                )
+                self.assertIn(
+                    "[market_data_missing_tushare_token]",
+                    detail_payload["events"][-1]["message"],
+                )
+
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()
 
