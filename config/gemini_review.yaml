@@ -14,7 +14,7 @@ output_dir: data/review
 prompt_path: agent/prompt.md
 
 # Gemini 模型名称
-model: gemini-3.1-pro-preview
+model: gemini-3.5-flash
 
 # 相邻 API 调用间隔（秒）
 request_delay: 5

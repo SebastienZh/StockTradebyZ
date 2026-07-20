@@ -8,11 +8,10 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 import os
 
 import pandas as pd
-import tushare as ts
 import yaml
 from tqdm import tqdm
 
@@ -106,8 +105,10 @@ def _cool_sleep(base_seconds: int) -> None:
     logger.warning("疑似被限流/封禁，进入冷却期 %d 秒...", sleep_s)
     time.sleep(sleep_s)
 
-# --------------------------- 历史K线（Tushare 日线，固定qfq） --------------------------- #
-pro: Optional[ts.pro_api] = None  # 模块级会话
+# --------------------------- 历史K线数据源 --------------------------- #
+# 默认使用无需 API Key 的 AKShare。Tushare 仅在配置明确选择时延迟导入，
+# 因此默认流程不要求安装凭证，也不会在导入本模块时初始化 Tushare。
+pro: Optional[Any] = None  # 可选的 Tushare 模块级会话
 
 def set_api(session) -> None:
     """由外部(比如GUI)注入已创建好的 ts.pro_api() 会话"""
@@ -126,6 +127,8 @@ def _to_ts_code(code: str) -> str:
         return f"{code}.SZ"
 
 def _get_kline_tushare(code: str, start: str, end: str) -> pd.DataFrame:
+    import tushare as ts
+
     ts_code = _to_ts_code(code)
     try:
         df = ts.pro_bar(
@@ -151,6 +154,75 @@ def _get_kline_tushare(code: str, start: str, end: str) -> pd.DataFrame:
     for c in ["open", "close", "high", "low", "volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     return df.sort_values("date").reset_index(drop=True)
+
+
+_AKSHARE_COLUMNS = {
+    "日期": "date",
+    "开盘": "open",
+    "收盘": "close",
+    "最高": "high",
+    "最低": "low",
+    "成交量": "volume",
+}
+
+
+def _normalize_akshare_kline(raw: pd.DataFrame) -> pd.DataFrame:
+    """将 AKShare A股历史行情标准化为现有选择器需要的 CSV schema。"""
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
+    df = raw.rename(columns=_AKSHARE_COLUMNS).copy()
+    required = ["date", "open", "close", "high", "low", "volume"]
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        raise ValueError(f"AKShare 返回字段缺失：{missing}；实际字段：{list(raw.columns)}")
+    df = df[required]
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    for column in required[1:]:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+    df = df.dropna(subset=required)
+    return df.sort_values("date").reset_index(drop=True)
+
+
+def _get_kline_akshare(
+    code: str,
+    start: str,
+    end: str,
+    *,
+    adjust: str = "qfq",
+    timeout: float = 20,
+) -> pd.DataFrame:
+    import akshare as ak
+
+    try:
+        raw = ak.stock_zh_a_hist(
+            symbol=str(code).zfill(6),
+            period="daily",
+            start_date=start,
+            end_date=end,
+            adjust=adjust,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        if _looks_like_ip_ban(exc):
+            raise RateLimitError(str(exc)) from exc
+        raise
+    return _normalize_akshare_kline(raw)
+
+
+def _get_kline(
+    provider: str,
+    code: str,
+    start: str,
+    end: str,
+    *,
+    adjust: str,
+    timeout: float,
+) -> pd.DataFrame:
+    if provider == "akshare":
+        return _get_kline_akshare(code, start, end, adjust=adjust, timeout=timeout)
+    if provider == "tushare":
+        return _get_kline_tushare(code, start, end)
+    raise ValueError(f"不支持的数据源：{provider}")
 
 def validate(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
@@ -194,12 +266,18 @@ def fetch_one(
     start: str,
     end: str,
     out_dir: Path,
+    provider: str = "akshare",
+    adjust: str = "qfq",
+    timeout: float = 20,
+    retry_wait_seconds: int = 5,
 ):
     csv_path = out_dir / f"{code}.csv"
 
     for attempt in range(1, 4):
         try:
-            new_df = _get_kline_tushare(code, start, end)
+            new_df = _get_kline(
+                provider, code, start, end, adjust=adjust, timeout=timeout
+            )
             if new_df.empty:
                 logger.debug("%s 无数据，生成空表。", code)
                 new_df = pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
@@ -211,7 +289,7 @@ def fetch_one(
                 logger.error(f"{code} 第 {attempt} 次抓取疑似被封禁，沉睡 {COOLDOWN_SECS} 秒")
                 _cool_sleep(COOLDOWN_SECS)
             else:
-                silent_seconds = 30 * attempt
+                silent_seconds = retry_wait_seconds * attempt
                 logger.info(f"{code} 第 {attempt} 次抓取失败，{silent_seconds} 秒后重试：{e}")
                 time.sleep(silent_seconds)
     else:
@@ -243,15 +321,21 @@ def main(log_path: Optional[Path] = None):
     setup_logging(log_path)
     logger.info("日志文件：%s", Path(log_path).resolve())
 
-    # ---------- Tushare Token ---------- #
-    os.environ["NO_PROXY"] = "api.waditu.com,.waditu.com,waditu.com"
-    os.environ["no_proxy"] = os.environ["NO_PROXY"]
-    ts_token = os.environ.get("TUSHARE_TOKEN")
-    if not ts_token:
-        raise ValueError("请先设置环境变量 TUSHARE_TOKEN，例如：export TUSHARE_TOKEN=你的token")
-    ts.set_token(ts_token)
-    global pro
-    pro = ts.pro_api()
+    # ---------- 数据源初始化 ---------- #
+    provider = str(cfg.get("provider", "akshare")).strip().lower()
+    if provider not in {"akshare", "tushare"}:
+        raise ValueError("provider 仅支持 akshare 或 tushare")
+    if provider == "tushare":
+        import tushare as ts
+
+        os.environ["NO_PROXY"] = "api.waditu.com,.waditu.com,waditu.com"
+        os.environ["no_proxy"] = os.environ["NO_PROXY"]
+        ts_token = os.environ.get("TUSHARE_TOKEN")
+        if not ts_token:
+            raise ValueError("选择 Tushare 时必须设置 TUSHARE_TOKEN")
+        ts.set_token(ts_token)
+        global pro
+        pro = ts.pro_api()
 
     # ---------- 日期解析 ---------- #
     raw_start = str(cfg.get("start", "20190101"))
@@ -272,12 +356,16 @@ def main(log_path: Optional[Path] = None):
         sys.exit(1)
 
     logger.info(
-        "开始抓取 %d 支股票 | 数据源:Tushare(日线,qfq) | 日期:%s → %s | 排除:%s",
-        len(codes), start, end, ",".join(sorted(exclude_boards)) or "无",
+        "开始抓取 %d 支股票 | 数据源:%s(日线,%s) | 日期:%s → %s | 排除:%s",
+        len(codes), provider, cfg.get("adjust", "qfq"), start, end,
+        ",".join(sorted(exclude_boards)) or "无",
     )
 
     # ---------- 多线程抓取（全量覆盖） ---------- #
-    workers = int(cfg.get("workers", 8))
+    workers = int(cfg.get("workers", 2))
+    adjust = str(cfg.get("adjust", "qfq"))
+    timeout = float(cfg.get("timeout", 20))
+    retry_wait_seconds = int(cfg.get("retry_wait_seconds", 5))
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [
             executor.submit(
@@ -286,6 +374,10 @@ def main(log_path: Optional[Path] = None):
                 start,
                 end,
                 out_dir,
+                provider,
+                adjust,
+                timeout,
+                retry_wait_seconds,
             )
             for code in codes
         ]

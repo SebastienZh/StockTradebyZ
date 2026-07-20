@@ -2,6 +2,15 @@
 # fetch_kline.py 配置文件
 # ============================================================
 
+# 默认使用 AKShare，无需 API Key。可选值：akshare、tushare。
+# 只有切换为 tushare 时才需要 TUSHARE_TOKEN。
+provider: akshare
+
+# AKShare 复权方式：qfq 前复权、hfq 后复权、空字符串不复权。
+adjust: qfq
+timeout: 20
+retry_wait_seconds: 5
+
 # 抓取日期范围（YYYYMMDD 或 'today'）
 start: "20190101"
 end: "today"
@@ -23,4 +32,5 @@ exclude_boards:
 out: "./data/raw"
 
 # 并发下载线程数
-workers: 8
+# AKShare 的上游是公开网页接口，低并发更稳；遇到限流时可降为 1。
+workers: 2

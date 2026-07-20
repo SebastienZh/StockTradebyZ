@@ -1,0 +1,5 @@
+# 点时基本面：A 股和美股有可回测的发布时间；港股免费源只作当日研究降级。
+routes:
+  CN: [tushare]
+  HK: [yfinance_current]
+  US: [sec_edgar, yfinance_current]

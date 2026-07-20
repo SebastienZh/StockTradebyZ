@@ -68,7 +68,7 @@ def _export_fig(fig, out_path: Path, width: int, height: int) -> None:
         format="jpg",
         width=width,
         height=height,
-        scale=2,        # 2× 分辨率，适合屏幕阅读
+        scale=1,        # 模型输入保留清晰度，同时避免无意义的 4 倍像素开销
     )
 
 
@@ -128,22 +128,20 @@ def main() -> None:
             continue
 
         # ── 周线图 ────────────────────────────────────────────────────
-        # week_path = out_root / f"{code}_week.jpg"
-        # try:
-        #     fig_week = make_weekly_chart(
-        #         df_raw, code,
-        #         bars=CONFIG["weekly_bars"],
-        #         height=CONFIG["week_height"],
-        #     )
-        #     _export_fig(fig_week, week_path, CONFIG["week_width"], CONFIG["week_height"])
-        # except Exception as e:
-        #     print(f"[ERROR] {code} 周线导出失败：{e}")
-        #     # 日线已成功，继续计数
-        #     print(f"[OK]   {code}  日线 ✓  周线 ✗")
-        #     ok_count += 1
-        #     continue
+        week_path = out_root / f"{code}_week.jpg"
+        try:
+            fig_week = make_weekly_chart(
+                df_raw, code,
+                bars=CONFIG["weekly_bars"],
+                height=CONFIG["week_height"],
+            )
+            _export_fig(fig_week, week_path, CONFIG["week_width"], CONFIG["week_height"])
+        except Exception as e:
+            print(f"[ERROR] {code} 周线导出失败：{e}")
+            skip_count += 1
+            continue
 
-        print(f"[OK]   {code}  → {day_path.name}")
+        print(f"[OK]   {code}  → {day_path.name}, {week_path.name}")
         ok_count += 1
 
     print(

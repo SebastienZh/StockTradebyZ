@@ -44,7 +44,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "output_dir": "data/review",
     "prompt_path": "agent/prompt.md",
     # Gemini 模型参数
-    "model": "gemini-3.1-pro-preview",
+    "model": "gemini-3.5-flash",
     "request_delay": 5,
     "skip_existing": False,
     "suggest_min_score": 4.0,
@@ -95,7 +95,15 @@ class GeminiReviewer(BaseReviewer):
         data = path.read_bytes()
         return types.Part.from_bytes(data=data, mime_type=mime_type)
 
-    def review_stock(self, code: str, day_chart: Path, prompt: str) -> dict:
+    def review_stock(
+        self,
+        code: str,
+        day_chart: Path,
+        week_chart: Path,
+        candidate: dict,
+        pick_date: str,
+        prompt: str,
+    ) -> dict:
         """
         调用 Gemini API，对单支股票进行图表分析，返回解析后的 JSON 结果。
         """
@@ -108,11 +116,13 @@ class GeminiReviewer(BaseReviewer):
         parts: list[types.Part] = [
             types.Part.from_text(text="【日线图】"),
             self.image_to_part(day_chart),
+            types.Part.from_text(text="【周线图】"),
+            self.image_to_part(week_chart),
             types.Part.from_text(text=user_text),
         ]
 
         response = self.client.models.generate_content(
-            model=self.config.get("model", "gemini-3.1-pro-preview"),
+            model=self.config.get("model", "gemini-3.5-flash"),
             contents=[types.Content(role="user", parts=parts)],
             config=types.GenerateContentConfig(
                 system_instruction=prompt,
