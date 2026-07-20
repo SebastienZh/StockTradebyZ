@@ -1,0 +1,16 @@
+candidates: data/candidates/candidates_latest.json
+kline_dir: data/kline
+raw_dir: data/raw
+output_dir: data/review
+prompt_path: agent/prompt_v2.md
+
+# 中国境内 Kimi API 开放平台；境外账号需改为 https://api.moonshot.ai/v1。
+base_url: https://api.moonshot.cn/v1
+model: kimi-k3
+reasoning_effort: high
+max_tokens: 16384
+timeout: 240
+max_retries: 2
+request_delay: 1
+skip_existing: false
+suggest_min_score: 4.0

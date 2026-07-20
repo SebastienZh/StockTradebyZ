@@ -6,8 +6,8 @@ run_all.py
   步骤 1  pipeline/fetch_kline.py   — 拉取最新 K 线数据
   步骤 2  pipeline/cli.py preselect — 量化初选，生成候选列表
   步骤 3  dashboard/export_kline_charts.py — 导出候选股 K 线图
-  步骤 4  agent/gemini_review.py    — Gemini 图表分析评分
-  步骤 5  打印推荐购买的股票
+  步骤 4  agent/glm_review.py       — GLM/Kimi 等双周期证据分析
+  步骤 5  打印通过复评的研究候选
 
 用法：
     python run_all.py
@@ -39,7 +39,7 @@ def _run(step_name: str, cmd: list[str]) -> None:
 
 
 def _print_recommendations() -> None:
-    """读取最新 suggestion.json，打印推荐购买的股票。"""
+    """读取最新 suggestion.json，打印通过复评的研究候选。"""
     candidates_file = ROOT / "data" / "candidates" / "candidates_latest.json"
     if not candidates_file.exists():
         print("[ERROR] 找不到 candidates_latest.json，无法定位 suggestion.json。")
@@ -86,7 +86,7 @@ def _print_recommendations() -> None:
         score_str   = f"{score:.1f}" if isinstance(score, (int, float)) else str(score)
         print(f"{rank:>4}  {code:>8}  {score_str:>6}  {signal_type:>10}  {verdict:>6}  {comment}")
 
-    print(f"\n✅ 推荐购买 {len(recommendations)} 只股票（详见 {suggestion_file}）")
+    print(f"\n✅ 通过复评的研究候选 {len(recommendations)} 只（详见 {suggestion_file}）")
 
 
 def main() -> None:
@@ -98,6 +98,10 @@ def main() -> None:
     parser.add_argument(
         "--start-from", type=int, default=1, metavar="N",
         help="从第 N 步开始执行（1~4），跳过前面的步骤",
+    )
+    parser.add_argument(
+        "--reviewer", choices=("glm", "kimi", "openai", "gemini"), default="glm",
+        help="AI 复评后端（默认国产 glm；kimi/openai/gemini 可作对照）",
     )
     args = parser.parse_args()
 
@@ -127,16 +131,22 @@ def main() -> None:
             [PYTHON, str(ROOT / "dashboard" / "export_kline_charts.py")],
         )
 
-    # ── 步骤 4：Gemini 图表分析 ──────────────────────────────────────
+    # ── 步骤 4：多模型图表分析 ──────────────────────────────────────
     if start <= 4:
+        reviewer_script = {
+            "glm": "glm_review.py",
+            "kimi": "kimi_review.py",
+            "openai": "openai_review.py",
+            "gemini": "gemini_review.py",
+        }[args.reviewer]
         _run(
-            "4/4  Gemini 图表分析（gemini_review）",
-            [PYTHON, str(ROOT / "agent" / "gemini_review.py")],
+            f"4/4  {args.reviewer} 双周期证据复评",
+            [PYTHON, str(ROOT / "agent" / reviewer_script)],
         )
 
     # ── 步骤 5：打印推荐结果 ─────────────────────────────────────────
     print(f"\n{'='*60}")
-    print("[步骤] 5/5  推荐购买的股票")
+    print("[步骤] 5/5  通过复评的研究候选")
     _print_recommendations()
 
 

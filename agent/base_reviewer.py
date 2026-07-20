@@ -32,13 +32,17 @@ class BaseReviewer:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
 
-    def find_chart_images(self, pick_date: str, code: str) -> Optional[Path]:
+    def find_chart_images(self, pick_date: str, code: str) -> tuple[Optional[Path], Optional[Path]]:
         date_dir = self.kline_dir / pick_date
         day_chart = date_dir / f"{code}_day.jpg"
         if not day_chart.exists():
             day_chart_png = date_dir / f"{code}_day.png"
             day_chart = day_chart_png if day_chart_png.exists() else None
-        return day_chart
+        week_chart = date_dir / f"{code}_week.jpg"
+        if not week_chart.exists():
+            week_chart_png = date_dir / f"{code}_week.png"
+            week_chart = week_chart_png if week_chart_png.exists() else None
+        return day_chart, week_chart
 
     @staticmethod
     def extract_json(text: str) -> dict:
@@ -51,13 +55,24 @@ class BaseReviewer:
             raise ValueError(f"未能在模型输出中找到 JSON 对象:\n{text}")
         return json.loads(text[start:end])
 
-    def review_stock(self, code: str, day_chart: Path, prompt: str) -> dict:
+    def review_stock(
+        self,
+        code: str,
+        day_chart: Path,
+        week_chart: Path,
+        candidate: dict,
+        pick_date: str,
+        prompt: str,
+    ) -> dict:
         """子类需实现此方法，调用具体的 LLM 进行打分，并返回 JSON 解析字典。"""
         raise NotImplementedError("子类必须实现 review_stock 方法")
 
     def generate_suggestion(self, pick_date: str, all_results: List[dict], min_score: float) -> dict:
-        passed = [r for r in all_results if r.get("total_score", 0) >= min_score]
-        excluded = [r["code"] for r in all_results if r.get("total_score", 0) < min_score]
+        passed = [
+            r for r in all_results
+            if r.get("total_score", 0) >= min_score and r.get("verdict") == "PASS"
+        ]
+        excluded = [r["code"] for r in all_results if r not in passed]
 
         passed.sort(key=lambda r: r.get("total_score", 0), reverse=True)
 
@@ -104,9 +119,9 @@ class BaseReviewer:
                 all_results.append(result)
                 continue
 
-            day_chart = self.find_chart_images(pick_date, code)
-            if day_chart is None:
-                print(f"[{i}/{len(candidates)}] {code} — 缺少日线图，跳过。")
+            day_chart, week_chart = self.find_chart_images(pick_date, code)
+            if day_chart is None or week_chart is None:
+                print(f"[{i}/{len(candidates)}] {code} — 缺少日线图或周线图，跳过。")
                 failed_codes.append(code)
                 continue
 
@@ -116,6 +131,9 @@ class BaseReviewer:
                 result = self.review_stock(
                     code=code,
                     day_chart=day_chart,
+                    week_chart=week_chart,
+                    candidate=candidate,
+                    pick_date=pick_date,
                     prompt=self.prompt,
                 )
                 with open(out_file, "w", encoding="utf-8") as f:

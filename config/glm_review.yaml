@@ -1,0 +1,18 @@
+candidates: data/candidates/candidates_latest.json
+kline_dir: data/kline
+raw_dir: data/raw
+output_dir: data/review
+prompt_path: agent/prompt_v2.md
+
+base_url: https://open.bigmodel.cn/api/paas/v4/
+# 国内高质量视觉主模型；失败时自动尝试官方免费视觉模型。
+model: glm-5v-turbo
+fallback_model: glm-4.6v-flash
+thinking: true
+temperature: 0.2
+max_tokens: 4096
+timeout: 180
+max_retries: 2
+request_delay: 1
+skip_existing: false
+suggest_min_score: 4.0

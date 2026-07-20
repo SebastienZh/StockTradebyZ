@@ -1,0 +1,14 @@
+# 生产优先级：授权/标准 API 为主，抓网页型接口只做降级和交叉验证。
+routes:
+  CN: [akshare, baostock, tushare, futu]
+  HK: [futu, yfinance, akshare]
+  US: [massive, futu, yfinance]
+
+storage_root: data/lake
+
+provider_options:
+  massive:
+    base_url: https://api.massive.com
+  futu:
+    host: 127.0.0.1
+    port: 11111

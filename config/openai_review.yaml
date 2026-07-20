@@ -1,0 +1,15 @@
+candidates: data/candidates/candidates_latest.json
+kline_dir: data/kline
+raw_dir: data/raw
+output_dir: data/review
+prompt_path: agent/prompt_v2.md
+
+model: gpt-5.6-sol
+reasoning_effort: high
+# 仅对最终少量高价值候选开启 pro；全量复评保持为空。
+reasoning_mode:
+image_detail: original
+timeout: 180
+request_delay: 1
+skip_existing: false
+suggest_min_score: 4.0
