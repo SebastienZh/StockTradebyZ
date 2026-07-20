@@ -11,7 +11,13 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from pipeline.fetch_kline import _normalize_akshare_kline
+from unittest.mock import patch
+
+from pipeline.fetch_kline import (
+    ProviderCircuitBreaker,
+    _get_kline_with_fallback,
+    _normalize_akshare_kline,
+)
 
 
 class FetchKlineTests(unittest.TestCase):
@@ -34,10 +40,45 @@ class FetchKlineTests(unittest.TestCase):
         )
         self.assertEqual(actual.iloc[0]["close"], 1410.0)
 
-    def test_default_config_uses_akshare_without_key(self):
+    def test_default_config_uses_keyless_fallback_chain(self):
         config = yaml.safe_load((ROOT / "config" / "fetch_kline.yaml").read_text("utf-8"))
-        self.assertEqual(config["provider"], "akshare")
+        self.assertEqual(config["provider"], "auto")
+        self.assertEqual(config["providers"], ["akshare", "sina", "baostock"])
         self.assertLessEqual(config["workers"], 2)
+
+    @patch("pipeline.fetch_kline._PROVIDER_BREAKER", new_callable=ProviderCircuitBreaker)
+    @patch("pipeline.fetch_kline._get_kline")
+    def test_network_failure_opens_circuit_and_falls_back(self, get_kline, breaker):
+        expected = pd.DataFrame({"date": [pd.Timestamp("2026-07-17")]})
+        get_kline.side_effect = [
+            ConnectionError("Remote end closed connection without response"),
+            expected,
+            expected,
+        ]
+        actual, source = _get_kline_with_fallback(
+            ["akshare", "sina"], "600519", "20260701", "20260720", adjust="qfq", timeout=20
+        )
+        self.assertIs(actual, expected)
+        self.assertEqual(source, "sina")
+        self.assertFalse(breaker.available("akshare"))
+
+        _, source = _get_kline_with_fallback(
+            ["akshare", "sina"], "000001", "20260701", "20260720", adjust="qfq", timeout=20
+        )
+        self.assertEqual(source, "sina")
+        self.assertEqual([call.args[0] for call in get_kline.call_args_list], ["akshare", "sina", "sina"])
+
+    @patch("pipeline.fetch_kline._PROVIDER_BREAKER", new_callable=ProviderCircuitBreaker)
+    @patch("pipeline.fetch_kline._get_kline")
+    def test_empty_result_falls_back_without_opening_circuit(self, get_kline, breaker):
+        expected = pd.DataFrame({"date": [pd.Timestamp("2026-07-17")]})
+        get_kline.side_effect = [pd.DataFrame(), expected]
+        actual, source = _get_kline_with_fallback(
+            ["akshare", "sina"], "600519", "20260701", "20260720", adjust="qfq", timeout=20
+        )
+        self.assertIs(actual, expected)
+        self.assertEqual(source, "sina")
+        self.assertTrue(breaker.available("akshare"))
 
 
 if __name__ == "__main__":

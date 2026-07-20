@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import random
 import sys
+import threading
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -83,27 +83,53 @@ def setup_logging(log_path: Optional[Path] = None) -> None:
 logger = logging.getLogger("fetch_from_stocklist")
 
 # --------------------------- 限流/封禁处理配置 --------------------------- #
-COOLDOWN_SECS = 600
 BAN_PATTERNS = (
     "访问频繁", "请稍后", "超过频率", "频繁访问",
     "too many requests", "429",
     "forbidden", "403",
-    "max retries exceeded"
 )
 
 def _looks_like_ip_ban(exc: Exception) -> bool:
     msg = (str(exc) or "").lower()
     return any(pat in msg for pat in BAN_PATTERNS)
 
-class RateLimitError(RuntimeError):
-    """表示命中限流/封禁，需要长时间冷却后重试。"""
-    pass
+NETWORK_PATTERNS = (
+    "remote end closed", "connection aborted", "connection reset",
+    "max retries exceeded", "proxyerror", "connecttimeout", "readtimeout",
+    "could not connect", "name resolution", "timed out",
+)
 
-def _cool_sleep(base_seconds: int) -> None:
-    jitter = random.uniform(0.9, 1.2)
-    sleep_s = max(1, int(base_seconds * jitter))
-    logger.warning("疑似被限流/封禁，进入冷却期 %d 秒...", sleep_s)
-    time.sleep(sleep_s)
+
+def _is_systemic_provider_error(exc: Exception) -> bool:
+    """判断应触发数据源熔断的网络/限流错误，而非个股数据错误。"""
+    msg = (str(exc) or "").lower()
+    return _looks_like_ip_ban(exc) or any(pattern in msg for pattern in NETWORK_PATTERNS)
+
+
+class ProviderCircuitBreaker:
+    """线程安全的运行期熔断器；避免数千只股票重复请求已失效的上游。"""
+
+    def __init__(self) -> None:
+        self._disabled: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def available(self, provider: str) -> bool:
+        with self._lock:
+            return provider not in self._disabled
+
+    def disable(self, provider: str, reason: Exception) -> bool:
+        with self._lock:
+            first = provider not in self._disabled
+            self._disabled.setdefault(provider, str(reason)[:300])
+            return first
+
+    def reason(self, provider: str) -> str | None:
+        with self._lock:
+            return self._disabled.get(provider)
+
+
+_PROVIDER_BREAKER = ProviderCircuitBreaker()
+_BAOSTOCK_LOCK = threading.Lock()
 
 # --------------------------- 历史K线数据源 --------------------------- #
 # 默认使用无需 API Key 的 AKShare。Tushare 仅在配置明确选择时延迟导入，
@@ -139,9 +165,7 @@ def _get_kline_tushare(code: str, start: str, end: str) -> pd.DataFrame:
             freq="D",
             api=pro
         )
-    except Exception as e:
-        if _looks_like_ip_ban(e):
-            raise RateLimitError(str(e)) from e
+    except Exception:
         raise
 
     if df is None or df.empty:
@@ -202,11 +226,85 @@ def _get_kline_akshare(
             adjust=adjust,
             timeout=timeout,
         )
-    except Exception as exc:
-        if _looks_like_ip_ban(exc):
-            raise RateLimitError(str(exc)) from exc
+    except Exception:
         raise
     return _normalize_akshare_kline(raw)
+
+
+def _get_kline_sina(
+    code: str,
+    start: str,
+    end: str,
+    *,
+    adjust: str = "qfq",
+    timeout: float = 20,
+) -> pd.DataFrame:
+    """通过 AKShare 的新浪行情接口获取 A 股日线。"""
+    import akshare as ak
+
+    del timeout  # 新浪接口当前不暴露 timeout 参数
+    prefix = "sh" if str(code).zfill(6).startswith(("60", "68", "9")) else "sz"
+    raw = ak.stock_zh_a_daily(
+        symbol=f"{prefix}{str(code).zfill(6)}",
+        start_date=start,
+        end_date=end,
+        adjust=adjust,
+    )
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
+    required = ["date", "open", "close", "high", "low", "volume"]
+    missing = [column for column in required if column not in raw.columns]
+    if missing:
+        raise ValueError(f"新浪行情返回字段缺失：{missing}；实际字段：{list(raw.columns)}")
+    df = raw[required].copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    for column in required[1:]:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+    return df.dropna(subset=required).sort_values("date").reset_index(drop=True)
+
+
+def _get_kline_baostock(code: str, start: str, end: str, *, adjust: str = "qfq") -> pd.DataFrame:
+    """使用无需 API Key 的 BaoStock；adjustflag=2 对应前复权。"""
+    import baostock as bs
+
+    code = str(code).zfill(6)
+    prefix = "sh" if code.startswith(("60", "68", "9")) else "sz"
+    with _BAOSTOCK_LOCK:
+        login = bs.login()
+        if login.error_code != "0":
+            raise RuntimeError(f"BaoStock 登录失败：{login.error_msg}")
+        try:
+            adjustflag = {"qfq": "2", "hfq": "1", "": "3"}.get(adjust)
+            if adjustflag is None:
+                raise ValueError(f"BaoStock 不支持复权方式：{adjust}")
+            rs = bs.query_history_k_data_plus(
+                f"{prefix}.{code}",
+                "date,open,high,low,close,volume",
+                start_date=pd.Timestamp(start).strftime("%Y-%m-%d"),
+                end_date=pd.Timestamp(end).strftime("%Y-%m-%d"),
+                frequency="d",
+                adjustflag=adjustflag,
+            )
+            rows: list[list[str]] = []
+            while rs.error_code == "0" and rs.next():
+                rows.append(rs.get_row_data())
+            if rs.error_code != "0":
+                raise RuntimeError(f"BaoStock 查询失败：{rs.error_msg}")
+            raw = pd.DataFrame(rows, columns=rs.fields)
+            if raw.empty:
+                return pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
+            return _get_normalized_baostock(raw)
+        finally:
+            bs.logout()
+
+
+def _get_normalized_baostock(raw: pd.DataFrame) -> pd.DataFrame:
+    required = ["date", "open", "close", "high", "low", "volume"]
+    df = raw[required].copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    for column in required[1:]:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+    return df.dropna(subset=required).sort_values("date").reset_index(drop=True)
 
 
 def _get_kline(
@@ -220,9 +318,37 @@ def _get_kline(
 ) -> pd.DataFrame:
     if provider == "akshare":
         return _get_kline_akshare(code, start, end, adjust=adjust, timeout=timeout)
+    if provider == "sina":
+        return _get_kline_sina(code, start, end, adjust=adjust, timeout=timeout)
+    if provider == "baostock":
+        return _get_kline_baostock(code, start, end, adjust=adjust)
     if provider == "tushare":
         return _get_kline_tushare(code, start, end)
     raise ValueError(f"不支持的数据源：{provider}")
+
+
+def _get_kline_with_fallback(
+    providers: list[str], code: str, start: str, end: str, *, adjust: str, timeout: float
+) -> tuple[pd.DataFrame, str]:
+    errors: list[str] = []
+    for provider in providers:
+        if not _PROVIDER_BREAKER.available(provider):
+            errors.append(f"{provider}=已熔断")
+            continue
+        try:
+            frame = _get_kline(provider, code, start, end, adjust=adjust, timeout=timeout)
+            if frame is None or frame.empty:
+                errors.append(f"{provider}=返回空数据")
+                logger.info("%s 使用 %s 返回空数据，尝试下一数据源", code, provider)
+                continue
+            return frame, provider
+        except Exception as exc:
+            errors.append(f"{provider}={str(exc)[:160]}")
+            if _is_systemic_provider_error(exc) and _PROVIDER_BREAKER.disable(provider, exc):
+                logger.warning("数据源 %s 发生系统性故障，本次运行全局熔断并自动降级：%s", provider, exc)
+            else:
+                logger.info("%s 使用 %s 失败，尝试下一数据源：%s", code, provider, exc)
+    raise RuntimeError("全部数据源失败：" + " | ".join(errors))
 
 def validate(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
@@ -266,34 +392,35 @@ def fetch_one(
     start: str,
     end: str,
     out_dir: Path,
-    provider: str = "akshare",
+    provider: str | list[str] = "akshare",
     adjust: str = "qfq",
     timeout: float = 20,
     retry_wait_seconds: int = 5,
 ):
     csv_path = out_dir / f"{code}.csv"
 
-    for attempt in range(1, 4):
+    providers = [provider] if isinstance(provider, str) else provider
+    for attempt in range(1, 3):
         try:
-            new_df = _get_kline(
-                provider, code, start, end, adjust=adjust, timeout=timeout
+            new_df, selected_provider = _get_kline_with_fallback(
+                providers, code, start, end, adjust=adjust, timeout=timeout
             )
             if new_df.empty:
                 logger.debug("%s 无数据，生成空表。", code)
                 new_df = pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
             new_df = validate(new_df)
             new_df.to_csv(csv_path, index=False)  # 直接覆盖保存
+            logger.info("%s 抓取成功 | source=%s | adjust=%s | rows=%d", code, selected_provider, adjust or "raw", len(new_df))
             break
         except Exception as e:
-            if _looks_like_ip_ban(e):
-                logger.error(f"{code} 第 {attempt} 次抓取疑似被封禁，沉睡 {COOLDOWN_SECS} 秒")
-                _cool_sleep(COOLDOWN_SECS)
-            else:
-                silent_seconds = retry_wait_seconds * attempt
+            silent_seconds = retry_wait_seconds * attempt
+            if attempt < 2:
                 logger.info(f"{code} 第 {attempt} 次抓取失败，{silent_seconds} 秒后重试：{e}")
                 time.sleep(silent_seconds)
+            else:
+                logger.error("%s 第 %d 次抓取失败：%s", code, attempt, e)
     else:
-        logger.error("%s 三次抓取均失败，已跳过！", code)       
+        logger.error("%s 两次抓取均失败，已跳过！", code)
 
 
 
@@ -322,10 +449,16 @@ def main(log_path: Optional[Path] = None):
     logger.info("日志文件：%s", Path(log_path).resolve())
 
     # ---------- 数据源初始化 ---------- #
-    provider = str(cfg.get("provider", "akshare")).strip().lower()
-    if provider not in {"akshare", "tushare"}:
-        raise ValueError("provider 仅支持 akshare 或 tushare")
-    if provider == "tushare":
+    provider = str(cfg.get("provider", "auto")).strip().lower()
+    provider_chain = [str(item).strip().lower() for item in cfg.get("providers", [])]
+    if provider == "auto":
+        providers = provider_chain or ["akshare", "sina", "baostock"]
+    else:
+        providers = [provider]
+    supported = {"akshare", "sina", "baostock", "tushare"}
+    if not providers or any(item not in supported for item in providers):
+        raise ValueError(f"数据源仅支持 {sorted(supported)}，或 provider: auto")
+    if "tushare" in providers:
         import tushare as ts
 
         os.environ["NO_PROXY"] = "api.waditu.com,.waditu.com,waditu.com"
@@ -357,7 +490,7 @@ def main(log_path: Optional[Path] = None):
 
     logger.info(
         "开始抓取 %d 支股票 | 数据源:%s(日线,%s) | 日期:%s → %s | 排除:%s",
-        len(codes), provider, cfg.get("adjust", "qfq"), start, end,
+        len(codes), "→".join(providers), cfg.get("adjust", "qfq"), start, end,
         ",".join(sorted(exclude_boards)) or "无",
     )
 
@@ -374,7 +507,7 @@ def main(log_path: Optional[Path] = None):
                 start,
                 end,
                 out_dir,
-                provider,
+                providers,
                 adjust,
                 timeout,
                 retry_wait_seconds,

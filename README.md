@@ -116,6 +116,7 @@ python -m pipeline.fetch_kline
 - exclude_boards：排除板块（gem、star、bj）
 - out：输出目录（默认 data/raw）
 - workers：并发线程数
+- provider/providers：默认 `AKShare(东方财富) → 新浪 → BaoStock` 自动降级
 
 ### 步骤 2：量化初选
 
@@ -179,19 +180,19 @@ python run_all.py --start-from 4 --reviewer kimi
 
 ## 5. 关键配置建议
 
-### 5.1 AKShare 与 Tushare 怎么选
+### 5.1 自动降级行情链与 Tushare
 
-| 维度 | AKShare（当前默认） | Tushare（可选） |
+| 维度 | 免 Key 自动降级链（当前默认） | Tushare（可选） |
 |---|---|---|
 | 行情凭证 | 无需注册或 API Key | 需要 Token，部分接口受积分/权限限制 |
-| 接入体验 | 安装后直接调用 | 需要账号、Token 和权限配置 |
+| 接入体验 | AKShare 东方财富失败后自动切新浪，再失败切 BaoStock | 需要账号、Token 和权限配置 |
 | 上游稳定性 | 聚合公开网页，上游改版或限流会影响接口 | 标准化 API，字段和调用方式通常更稳定 |
 | A股历史行情 | 支持日/周/月线和前后复权 | 覆盖完整、字段规范、适合长期维护 |
 | 点时财务回测 | 不建议直接假设网页快照具备历史可得时间 | 可按 `ann_date` 截断，更适合防未来数据泄漏 |
-| 本项目定位 | 日常免 Key 行情主源 | 高质量基本面和交叉核验的可选升级源 |
+| 本项目定位 | 日常免 Key 行情；故障源会在本次运行中熔断，不再等待 600 秒 | 高质量基本面和交叉核验的可选升级源 |
 
 默认运行不需要安装 Tushare，也不需要 `TUSHARE_TOKEN`。如果以后在
-`config/fetch_kline.yaml` 中切回 `provider: tushare`，再执行
+`config/fetch_kline.yaml` 中改为 `provider: tushare`，再执行
 `pip install tushare` 并配置 Token。
 
 ### 5.2 抓取层

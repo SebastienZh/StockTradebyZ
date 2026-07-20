@@ -2,14 +2,18 @@
 # fetch_kline.py 配置文件
 # ============================================================
 
-# 默认使用 AKShare，无需 API Key。可选值：akshare、tushare。
-# 只有切换为 tushare 时才需要 TUSHARE_TOKEN。
-provider: akshare
+# 默认按顺序自动降级，三个数据源均无需 API Key。
+# akshare 为东方财富接口；sina 为 AKShare 的新浪接口；baostock 为最终兜底。
+provider: auto
+providers:
+  - akshare
+  - sina
+  - baostock
 
 # AKShare 复权方式：qfq 前复权、hfq 后复权、空字符串不复权。
 adjust: qfq
 timeout: 20
-retry_wait_seconds: 5
+retry_wait_seconds: 2
 
 # 抓取日期范围（YYYYMMDD 或 'today'）
 start: "20190101"
