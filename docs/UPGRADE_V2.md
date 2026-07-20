@@ -48,7 +48,7 @@ currency, market, symbol, source, fetched_at
 
 ## AI 路由
 
-默认主模型为国产 `glm-5v-turbo`，通过智谱的 OpenAI 兼容接口输入结构化证据、日线和周线；主模型不可用时自动降级到免费的 `glm-4.6v-flash`。JSON 模式输出仍须经过 Pydantic 强类型验证，最终分数与风险否决由程序计算。`gpt-5.6-sol` 保留为有额度时的高质量对照后端。
+默认主模型为国产 `glm-5v-turbo`，通过智谱的 OpenAI 兼容接口输入结构化证据、日线和周线；主模型不可用时自动降级到免费的 `glm-4.6v-flash`。新增 `kimi-k3` 作为国内旗舰视觉与深度推理对照后端，通过 Moonshot OpenAI 兼容接口调用，并使用 JSON Schema 与本地 Pydantic 双重校验。最终分数与风险否决仍由程序计算。`gpt-5.6-sol` 保留为有额度时的高质量对照后端。
 
 Gemini 保留为独立 A/B 对照，不再与核心流程耦合。RTX 4090 上的本地视觉模型适合全市场预筛、OCR 或云端故障降级，但最终候选仍由旗舰模型和确定性风控共同确认。
 
@@ -85,6 +85,12 @@ Gemini 对照运行：
 
 ```bash
 python run_all.py --start-from 4 --reviewer gemini
+```
+
+Kimi K3 对照运行：
+
+```bash
+python run_all.py --start-from 4 --reviewer kimi
 ```
 
 ## 上线验收

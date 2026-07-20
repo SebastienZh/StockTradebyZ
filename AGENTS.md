@@ -20,7 +20,7 @@ Maintain a reproducible, point-in-time stock research system for CN, HK, and US 
 - Use Pydantic Structured Outputs. Do not recover malformed JSON with regex in the OpenAI path.
 - Never ask for or persist hidden chain-of-thought. Store concise evidence summaries, uncertainties, input hashes, prompt hashes, model id, and response id.
 - Missing or stale fundamentals must remain explicit; never infer them from a chart.
-- Keep OpenAI, Gemini, and local-model adapters independently testable. Model changes require the same frozen evaluation set.
+- Keep GLM, Kimi, OpenAI, Gemini, and local-model adapters independently testable. Model changes require the same frozen evaluation set.
 
 ## Verification
 

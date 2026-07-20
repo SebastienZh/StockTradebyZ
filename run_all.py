@@ -6,7 +6,7 @@ run_all.py
   步骤 1  pipeline/fetch_kline.py   — 拉取最新 K 线数据
   步骤 2  pipeline/cli.py preselect — 量化初选，生成候选列表
   步骤 3  dashboard/export_kline_charts.py — 导出候选股 K 线图
-  步骤 4  agent/glm_review.py       — 国产 GLM 双周期证据分析
+  步骤 4  agent/glm_review.py       — GLM/Kimi 等双周期证据分析
   步骤 5  打印通过复评的研究候选
 
 用法：
@@ -100,8 +100,8 @@ def main() -> None:
         help="从第 N 步开始执行（1~4），跳过前面的步骤",
     )
     parser.add_argument(
-        "--reviewer", choices=("glm", "openai", "gemini"), default="glm",
-        help="AI 复评后端（默认国产 glm；openai/gemini 可作对照）",
+        "--reviewer", choices=("glm", "kimi", "openai", "gemini"), default="glm",
+        help="AI 复评后端（默认国产 glm；kimi/openai/gemini 可作对照）",
     )
     args = parser.parse_args()
 
@@ -135,6 +135,7 @@ def main() -> None:
     if start <= 4:
         reviewer_script = {
             "glm": "glm_review.py",
+            "kimi": "kimi_review.py",
             "openai": "openai_review.py",
             "gemini": "gemini_review.py",
         }[args.reviewer]

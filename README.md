@@ -7,6 +7,7 @@
 - 导出候选股票日线和周线图
 - 默认调用国产 GLM-5V-Turbo，对双周期图和精确指标证据进行强类型复评
 - 主模型不可用时自动降级到免费的 GLM-4.6V-Flash
+- 新增 Kimi K3 作为国内旗舰视觉与推理对照后端
 - 保留 OpenAI 和 Gemini 作为可选 A/B 对照后端
 - 提供多市场行情路由、主备源质量核验和点时基本面接口
 
@@ -72,6 +73,7 @@ Windows PowerShell（永久写入）：
 ~~~powershell
 [Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "你的OpenAIApiKey", "User")
 [Environment]::SetEnvironmentVariable("ZAI_API_KEY", "你的智谱ApiKey", "User")
+[Environment]::SetEnvironmentVariable("MOONSHOT_API_KEY", "你的KimiApiKey", "User")
 [Environment]::SetEnvironmentVariable("GEMINI_API_KEY", "可选的GeminiApiKey", "User")
 ~~~
 
@@ -148,11 +150,25 @@ python agent/glm_review.py
 
 ~~~bash
 python agent/glm_review.py --config config/glm_review.yaml
+python run_all.py --start-from 4 --reviewer kimi
 python run_all.py --start-from 4 --reviewer openai
 python run_all.py --start-from 4 --reviewer gemini
 ~~~
 
-默认配置见 [config/glm_review.yaml](config/glm_review.yaml)。OpenAI 与 Gemini 仍保留为可选对照后端。
+默认配置见 [config/glm_review.yaml](config/glm_review.yaml)。Kimi K3 配置见
+[config/kimi_review.yaml](config/kimi_review.yaml)，OpenAI 与 Gemini 仍保留为可选对照后端。
+
+Kimi K3 使用中国境内 Moonshot API：
+
+~~~text
+MOONSHOT_API_KEY=你的Kimi开放平台密钥
+~~~
+
+配置后运行：
+
+~~~bash
+python run_all.py --start-from 4 --reviewer kimi
+~~~
 
 读取候选与图表后，输出：
 
